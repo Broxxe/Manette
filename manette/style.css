@@ -1,0 +1,94 @@
+/* Cartes de chiffres en haut des pages */
+.stat-card {
+  padding: 16px 18px;
+  border-radius: 16px;
+}
+.stat-icon { color: var(--accent-color); }
+.stat-value {
+  font-size: 1.45em;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* Pastille d'icône colorée devant les lignes */
+.icon-tile {
+  padding: 8px;
+  border-radius: 10px;
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+}
+.icon-tile.large {
+  padding: 12px;
+  border-radius: 14px;
+}
+
+/* Étiquette de la méthode d'installation */
+.pill-tag {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 700;
+}
+.src-apt      { --tag: var(--blue-3); }
+.src-deb      { --tag: var(--orange-3); }
+.src-flatpak  { --tag: var(--purple-3); }
+.src-snap     { --tag: var(--green-4); }
+.src-appimage { --tag: var(--brown-2); }
+.src-local    { --tag: var(--light-5); }
+.pill-tag {
+  color: color-mix(in srgb, var(--tag) 65%, currentColor);
+  background: color-mix(in srgb, var(--tag) 20%, transparent);
+}
+
+/* Filtres en pastilles */
+button.chip {
+  padding: 4px 14px;
+  min-height: 0;
+  border-radius: 999px;
+  font-weight: 600;
+}
+button.chip:checked {
+  background: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+}
+
+.remove-button:hover { color: var(--error-color); }
+
+/* Barres d'occupation */
+levelbar.usage trough {
+  min-height: 8px;
+  border-radius: 999px;
+  padding: 0;
+}
+levelbar.usage block {
+  min-height: 8px;
+  border-radius: 999px;
+}
+levelbar.usage block.filled.ok   { background: var(--accent-bg-color); }
+levelbar.usage block.filled.warn { background: var(--warning-bg-color); }
+levelbar.usage block.filled.crit { background: var(--error-bg-color); }
+
+/* Tuiles de Mes commandes */
+button.tile {
+  padding: 18px;
+  border-radius: 18px;
+  min-height: 150px;
+}
+.command-preview {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  opacity: 0.8;
+}
+.icon-choice { padding: 10px; border-radius: 10px; }
+.icon-choice:checked {
+  background: var(--accent-bg-color);
+  color: var(--accent-fg-color);
+}
+
+/* Console */
+.console-view, .console-view text {
+  background: transparent;
+}
+.console-view { font-size: 0.92em; }
+.command-editor, .command-editor text { background: transparent; }

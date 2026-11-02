@@ -1,0 +1,107 @@
+"""Page Système : état de la machine, disques et actions toutes prêtes."""
+
+import threading
+
+from gi.repository import Adw, Gio, GLib, Gtk
+
+from . import system
+from .widgets import StatCard, icon_tile, page_box, page_scroller, stat_grid, usage_bar
+
+
+class SystemPage(Gtk.Box):
+    def __init__(self, window):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.window = window
+        self.measured_rows = []
+
+        content = page_box()
+        self.card_os = StatCard("Système", "computer-symbolic")
+        self.card_uptime = StatCard("Allumé depuis", "preferences-system-time-symbolic")
+        self.card_mem = StatCard("Mémoire", "media-flash-symbolic")
+        self.card_disk = StatCard("Espace libre", "drive-harddisk-symbolic")
+        content.append(stat_grid(self.card_os, self.card_uptime, self.card_mem, self.card_disk))
+
+        self.disk_group = Adw.PreferencesGroup(title="Disques", description="Clique sur un disque pour l'ouvrir")
+        self.disk_rows = []
+        content.append(self.disk_group)
+
+        for title, description, actions in system.action_groups():
+            group = Adw.PreferencesGroup(title=title, description=description)
+            for action in actions:
+                group.add(self._action_row(action))
+            content.append(group)
+
+        self.append(page_scroller(content))
+
+    def _action_row(self, action: system.Action) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=action.title, subtitle=action.subtitle)
+        row.add_prefix(icon_tile(action.icon))
+        if action.root:
+            row.add_suffix(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Demande ton mot de passe",
+                                     css_classes=["dim-label"]))
+        button = Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Lancer",
+                            valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
+        button.connect("clicked", lambda *_: self._run(action))
+        row.add_suffix(button)
+        row.set_activatable_widget(button)
+        if action.measure:
+            self.measured_rows.append((row, action))
+        return row
+
+    def _run(self, action: system.Action):
+        def go():
+            self.window.run(["bash", "-c", action.command], action.title, action.display or action.command.strip(),
+                            on_done=lambda ok: self._after(action))
+        if action.confirm:
+            self.window.confirm(f"{action.title} ?", action.subtitle + ".", "Lancer", go, destructive=False)
+        else:
+            go()
+
+    def _after(self, action):
+        self.refresh()
+        if action.rescan:
+            self.window.apps_page.scan()
+
+    # --- Rafraîchissement -------------------------------------------------
+
+    def refresh(self):
+        info = system.overview()
+        self.card_os.set(info["os"], f"Noyau {info['kernel']}")
+        self.card_uptime.set(info["uptime"], info["host"])
+        self.card_mem.set(f"{GLib.format_size(info['mem_used'])}",
+                          f"utilisés sur {GLib.format_size(info['mem_total'])}", info["mem_fraction"])
+
+        disks = system.disks()
+        for row in self.disk_rows:
+            self.disk_group.remove(row)
+        self.disk_rows = [self._disk_row(d) for d in disks]
+        for row in self.disk_rows:
+            self.disk_group.add(row)
+        if root := next((d for d in disks if d.mount == "/"), disks[0] if disks else None):
+            self.card_disk.set(GLib.format_size(root.free), f"sur {GLib.format_size(root.total)} ({root.label})",
+                               root.used / root.total)
+
+        threading.Thread(target=self._measure, daemon=True).start()
+
+    def _disk_row(self, disk: system.Disk) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=disk.label, subtitle=f"{disk.mount} · {disk.device}", activatable=True)
+        row.add_prefix(icon_tile("drive-harddisk-symbolic"))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.CENTER, width_request=240)
+        box.append(Gtk.Label(label=f"{GLib.format_size(disk.free)} libres sur {GLib.format_size(disk.total)}",
+                             xalign=1, css_classes=["caption", "numeric"]))
+        box.append(usage_bar(disk.used / disk.total))
+        row.add_suffix(box)
+        row.connect("activated", lambda *_: Gio.AppInfo.launch_default_for_uri(
+            GLib.filename_to_uri(disk.mount, None), None))
+        return row
+
+    def _measure(self):
+        for row, action in self.measured_rows:
+            try:
+                size = action.measure()
+            except OSError:
+                size = None
+            if size is not None:
+                text = f"{action.subtitle} · <b>{GLib.format_size(size)}</b> à récupérer" if size else \
+                    f"{action.subtitle} · rien à récupérer"
+                GLib.idle_add(row.set_subtitle, text)

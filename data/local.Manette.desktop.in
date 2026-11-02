@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Manette
+Comment=Applications, système et commandes perso en boutons
+Exec=@EXEC@
+Icon=local.Manette
+Terminal=false
+Categories=System;
+Keywords=mise à jour;update;apt;flatpak;snap;appimage;disque;commande;
+StartupNotify=true

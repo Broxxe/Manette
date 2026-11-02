@@ -1,0 +1,4 @@
+#!/bin/sh
+# Lance Manette depuis n'importe où.
+ROOT="$(dirname "$(dirname "$(readlink -f "$0")")")"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m manette "$@"

@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Éditeurs et système
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Archives faites pour copier le projet à la main
+*.tar.gz
