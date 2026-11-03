@@ -10,6 +10,7 @@ from .console import Console
 from .custom_page import CustomPage
 from .monitor_page import MonitorPage
 from .system_page import SystemPage
+from . import system
 
 APP_ID = "local.Manette"
 HERE = Path(__file__).parent
@@ -80,10 +81,22 @@ class Window(Adw.ApplicationWindow):
         self.refresh_button.set_sensitive(not scanning)
         self.refresh_button.set_child(Adw.Spinner() if scanning else Gtk.Image(icon_name="view-refresh-symbolic"))
 
-    def run(self, argv, title, display=None, on_done=None):
+    def run(self, argv, title, display=None, on_done=None, space_paths=None):
         if self.console.busy:
-            self.toast("Une commande tourne déjà : attends qu'elle se termine.")
+            self.split.set_show_sidebar(True)
+            self.confirm("Une opération est déjà en cours", f"« {self.console.title} » continue. "
+                         f"« {title} » n'a pas été lancé. Attends la fin de l'opération.",
+                         "Compris", lambda: None, destructive=False)
             return
+        if space_paths is not None:
+            warnings = system.space_warnings(space_paths)
+            if warnings:
+                body = "\n".join(warnings) + ("\n\nLibère de la place dans Système → Nettoyage avant de continuer. "
+                        "Ce seuil de précaution ne garantit pas l'espace nécessaire au téléchargement "
+                        "et à l'installation.")
+                self.confirm("Espace disque faible ou inconnu", body, "Continuer quand même",
+                             lambda: self.run(argv, title, display, on_done), destructive=False)
+                return
         self.split.set_show_sidebar(True)
         self.console.run(argv, title, display, on_done)
 

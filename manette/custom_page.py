@@ -56,7 +56,7 @@ class CustomPage(Gtk.Box):
         icon.append(Gtk.Image(icon_name=item.icon, pixel_size=24))
         top.append(icon)
         if item.root:
-            top.append(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Demande ton mot de passe",
+            top.append(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Autorisation administrateur requise",
                                  valign=Gtk.Align.END, css_classes=["dim-label"]))
         if item.terminal:
             top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", tooltip_text="S'ouvre dans un terminal",
@@ -103,8 +103,11 @@ class CustomPage(Gtk.Box):
                 self.window.toast(f"« {item.name} » s'ouvre dans le terminal")
             else:
                 self.window.run(commands.argv(item), item.name, item.command)
-        if item.confirm:
-            self.window.confirm(f"Lancer « {item.name} » ?", item.command, "Lancer", go, destructive=False)
+        if item.root or item.confirm:
+            body = item.command
+            if item.root:
+                body = "Cette commande aura les droits administrateur et pourra modifier tout le système.\n\n" + body
+            self.window.confirm(f"Lancer « {item.name} » ?", body, "Lancer", go, destructive=item.root)
         else:
             go()
 
@@ -169,15 +172,18 @@ class CommandDialog(Adw.Dialog):
         page.add(command_group)
 
         options = Adw.PreferencesGroup(title="Options")
-        self.root = Adw.SwitchRow(title="Droits administrateur", subtitle="Lancée avec pkexec : ton mot de passe sera demandé",
+        self.root = Adw.SwitchRow(title="Droits administrateur", subtitle="Demande une autorisation au système",
                                   active=item.root if item else False)
-        self.confirm = Adw.SwitchRow(title="Demander confirmation", subtitle="Pour les commandes qui cassent des choses",
-                                     active=item.confirm if item else False)
+        self.confirm = Adw.SwitchRow(title="Demander confirmation",
+                                     subtitle="Affiche la commande avant de la lancer, même sans droits administrateur",
+                                     active=item.confirm if item else True)
         self.terminal = Adw.SwitchRow(title="Ouvrir dans un vrai terminal",
                                       subtitle="Pour les commandes interactives (htop, ssh, questions…)",
                                       active=item.terminal if item else False)
         for row in (self.root, self.confirm, self.terminal):
             options.add(row)
+        self.root.connect("notify::active", lambda *_: self._sync_confirmation())
+        self._sync_confirmation()
         page.add(options)
 
         icons_group = Adw.PreferencesGroup(title="Icône")
@@ -207,13 +213,21 @@ class CommandDialog(Adw.Dialog):
         buffer = self.command.get_buffer()
         return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False).strip()
 
+    def _sync_confirmation(self):
+        root = self.root.get_active()
+        if root:
+            self.confirm.set_active(True)
+        self.confirm.set_sensitive(not root)
+        self.confirm.set_subtitle("Obligatoire pour les commandes avec droits administrateur" if root else
+                                  "Une commande peut aussi modifier tes fichiers sans droits administrateur")
+
     def _validate(self):
         self.save_button.set_sensitive(bool(self.name.get_text().strip() and self._command_text()))
 
     def _save(self):
         values = dict(name=self.name.get_text().strip(), command=self._command_text(),
                       description=self.description.get_text().strip(), icon=self.icon, root=self.root.get_active(),
-                      confirm=self.confirm.get_active(), terminal=self.terminal.get_active())
+                      confirm=self.root.get_active() or self.confirm.get_active(), terminal=self.terminal.get_active())
         edited = replace(self.item, **values) if self.item else Custom(**values)
         self.on_save(self.item, edited)
         self.close()

@@ -225,12 +225,28 @@ class MonitorPage(Gtk.Box):
         self.app_list.invalidate_sort()
 
     def close_app(self, usage: monitor.AppUsage):
+        if not usage.units:
+            return
         def go():
-            subprocess.run(["systemctl", "--user", "stop", *usage.units], capture_output=True)
-            self.window.toast(f"{usage.name} est fermée")
+            threading.Thread(target=self._close_app, args=(usage,), daemon=True).start()
         self.window.confirm(f"Fermer {usage.name} ?",
                             f"Ses {usage.processes} processus seront arrêtés. Ce qui n'est pas enregistré sera perdu.",
                             "Fermer", go)
+
+    def _close_app(self, usage):
+        try:
+            result = subprocess.run(["systemctl", "--user", "stop", *usage.units],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                detail = result.stderr.strip() or f"code {result.returncode}"
+                message = f"Impossible de fermer {usage.name} : {detail}"
+            else:
+                message = f"{usage.name} est fermée"
+        except subprocess.TimeoutExpired:
+            message = f"Fermeture de {usage.name} non confirmée : délai dépassé."
+        except OSError as error:
+            message = f"Impossible de fermer {usage.name} : {error}"
+        GLib.idle_add(self.window.toast, message)
 
 
 class AppUsageRow(Adw.ActionRow):

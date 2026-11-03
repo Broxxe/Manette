@@ -2,15 +2,18 @@
 
 import threading
 import traceback
+import subprocess
+from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from . import scanner
+from . import local_apps, local_removal, scanner
 from .scanner import APPIMAGE, APT, DEB, SOURCES
+from .data_dialog import DataDialog
 from .widgets import StatCard, page_box, page_scroller, plural, stat_grid
 
 FILTERS = [("all", "Toutes"), ("updates", "Mises à jour"), *SOURCES.items()]
-REMOVABLE = {APT, DEB, scanner.FLATPAK, scanner.SNAP, APPIMAGE}
+REMOVABLE = {APT, DEB, scanner.FLATPAK, scanner.SNAP, APPIMAGE, scanner.LOCAL}
 
 
 class AppsPage(Gtk.Box):
@@ -26,10 +29,21 @@ class AppsPage(Gtk.Box):
         self.banner.connect("button-clicked", lambda *_: self.update_all())
         self.append(self.banner)
 
+        file_bar = Gtk.Box(spacing=12, margin_top=12, margin_start=16, margin_end=16)
+        file_bar.append(Gtk.Label(label="Une application téléchargée ?", xalign=0, hexpand=True, wrap=True))
+        self.open_button = Gtk.Button(child=Adw.ButtonContent(icon_name="document-open-symbolic",
+                                                             label="Ouvrir un fichier…"))
+        self.open_button.connect("clicked", lambda *_: self.open_file())
+        file_bar.append(self.open_button)
+        self.append(file_bar)
+
         self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE)
         self.stack.add_named(Adw.StatusPage(title="Analyse en cours…",
                                             description="Je repère tes applications et la façon dont elles sont installées.",
                                             child=Adw.Spinner(width_request=40, height_request=40)), "loading")
+        self.stack.add_named(Adw.StatusPage(title="Analyse impossible",
+                                            description="Réessaie avec le bouton Actualiser.",
+                                            icon_name="dialog-warning-symbolic"), "error")
         self.append(self.stack)
 
         content = page_box()
@@ -37,6 +51,9 @@ class AppsPage(Gtk.Box):
         self.card_updates = StatCard("Mises à jour", "software-update-available-symbolic")
         self.card_size = StatCard("Espace occupé", "drive-harddisk-symbolic")
         content.append(stat_grid(self.card_count, self.card_updates, self.card_size))
+        self.scan_warning = Gtk.Label(xalign=0, wrap=True, selectable=True, visible=False,
+                                       css_classes=["warning"])
+        content.append(self.scan_warning)
 
         tools = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         search_row = Gtk.Box(spacing=8)
@@ -72,18 +89,26 @@ class AppsPage(Gtk.Box):
 
     def _scan_thread(self):
         try:
-            apps = scanner.scan()
+            result = scanner.scan()
         except Exception:
             traceback.print_exc()
-            apps = None
-        GLib.idle_add(self._populate, apps)
+            result = None
+        GLib.idle_add(self._populate, result)
 
-    def _populate(self, apps):
+    def _populate(self, result):
         self.scanning = False
         self.window.set_scanning(False)
-        if apps is None:
+        if result is None:
+            self.card_updates.set("Inconnu", "La dernière analyse a échoué")
+            self.banner.set_revealed(False)
+            self.scan_warning.set_text("Analyse échouée : les résultats précédents peuvent être périmés.")
+            self.scan_warning.set_visible(True)
+            self.stack.set_visible_child_name("list" if self.apps else "error")
             self.window.toast("L'analyse des applications a échoué (détails dans le terminal).")
             return
+        apps = result.apps
+        self.scan_warning.set_text("Vérification incomplète :\n" + "\n".join(result.warnings))
+        self.scan_warning.set_visible(bool(result.warnings))
         self.apps = apps
         self.list.remove_all()
         for app in apps:
@@ -94,8 +119,9 @@ class AppsPage(Gtk.Box):
         self.card_count.set(str(len(apps)), " · ".join(
             f"{sum(a.source == s for a in apps)} {label}" for s, label in SOURCES.items()
             if any(a.source == s for a in apps))[:80])
-        self.card_updates.set(str(len(updates)) if updates else "Aucune",
-                              "prêtes à installer" if updates else "Tout est à jour")
+        self.card_updates.set(str(len(updates)) if updates else ("Inconnu" if result.warnings else "Aucune"),
+                              "Vérification incomplète" if result.warnings else
+                              ("prêtes à installer" if updates else "Aucune mise à jour détectée"))
         self.card_size.set(GLib.format_size(total), "par les applications listées")
         self.banner.set_title(f"{plural(len(updates), 'mise à jour disponible', 'mises à jour disponibles')} : "
                               + ", ".join(a.name for a in updates[:4]) + ("…" if len(updates) > 4 else ""))
@@ -147,7 +173,80 @@ class AppsPage(Gtk.Box):
 
     # --- Actions ----------------------------------------------------------
 
+    def show_data(self, app):
+        DataDialog(app, self.window).present(self.window)
+
+    def open_file(self):
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        supported = Gtk.FileFilter(name="Applications (.deb, .AppImage, Flatpak)")
+        for suffix in ("deb", "AppImage", "appimage", "flatpakref", "flatpak"):
+            supported.add_suffix(suffix)
+        filters.append(supported)
+        dialog = Gtk.FileDialog(title="Ouvrir une application téléchargée", filters=filters)
+        folder = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or str(Path.home())
+        dialog.set_initial_folder(Gio.File.new_for_path(folder))
+        dialog.open(self.window, None, self._file_selected)
+
+    def _file_selected(self, dialog, result):
+        try:
+            file = dialog.open_finish(result)
+        except GLib.Error as error:
+            if not error.matches(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED):
+                self.window.toast(f"Impossible d'ouvrir le fichier : {error.message}")
+            return
+        path = file.get_path()
+        if path is None:
+            self.window.toast("Choisis un fichier enregistré sur cet ordinateur.")
+            return
+        self._inspect_download(path)
+
+    def _inspect_download(self, path):
+        self.open_button.set_sensitive(False)
+        threading.Thread(target=self._inspect_thread, args=(path,), daemon=True).start()
+
+    def _inspect_thread(self, path):
+        try:
+            download, error = local_apps.inspect_file(path), None
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            download, error = None, str(exc)
+        GLib.idle_add(self._confirm_download, download, error)
+
+    def _confirm_download(self, download, error):
+        self.open_button.set_sensitive(True)
+        if error:
+            self.window.toast(f"Impossible d'ouvrir cette application : {error}")
+            return
+        launch = download.kind == "appimage"
+        label = "Lancer" if launch else "Installer"
+        body = f"{download.path}\n\n{download.description}\n\nN'ouvre que des applications dont tu connais la provenance."
+        self.window.confirm(f"{label} {download.path.name} ?", body, label,
+                            lambda: self._open_download(download), destructive=False)
+
+    def _open_download(self, download):
+        if download.kind == "appimage":
+            threading.Thread(target=self._launch_download, args=(download,), daemon=True).start()
+            return
+        command = download.command
+        paths = [Path.home()] if download.kind == "flatpak" else ["/", "/var/cache/apt/archives"]
+        self.window.run(command.argv, f"Installation de {download.path.name}", command.display,
+                        on_done=lambda ok: self._after_install(), space_paths=paths)
+
+    def _launch_download(self, download):
+        try:
+            local_apps.launch_appimage(download)
+            message = f"{download.path.stem} se lance…"
+        except (OSError, ValueError) as error:
+            message = f"Impossible de lancer : {error}"
+        GLib.idle_add(self.window.toast, message)
+
+    def _after_install(self):
+        self.scan()
+        self.window.system_page.refresh()
+
     def launch(self, app):
+        if app.source == APPIMAGE:
+            self._inspect_download(app.ident)
+            return
         try:
             app.info.launch([], Gdk.Display.get_default().get_app_launch_context())
             self.window.toast(f"{app.name} se lance…")
@@ -156,7 +255,17 @@ class AppsPage(Gtk.Box):
 
     def update(self, app):
         command = scanner.update_command(app)
-        self.window.run(command.argv, f"Mise à jour de {app.name}", command.display, on_done=lambda ok: self.scan())
+        if command is None:
+            return
+        body = f"{app.name} : {app.version} → {app.update}"
+        if app.source == DEB:
+            body += ("\n\nLe paquet téléchargé peut exécuter des scripts avec les droits administrateur. "
+                     "La source de téléchargement est :\n" + app.update_url)
+        self.window.confirm(f"Mettre à jour {app.name} ?", body, "Mettre à jour",
+                            lambda: self.window.run(command.argv, f"Mise à jour de {app.name}", command.display,
+                                                    on_done=lambda ok: self.scan(),
+                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]),
+                            destructive=False)
 
     def update_all(self):
         apps = [a for a in self.apps if scanner.update_command(a)]
@@ -164,38 +273,133 @@ class AppsPage(Gtk.Box):
         if not command:
             return
         body = "\n".join(f"• {a.name} → {a.update}" for a in apps)
-        body += "\n\nTon mot de passe ne sera demandé qu'une fois."
+        if any(a.source == DEB for a in apps):
+            body += "\n\nLes .deb téléchargés peuvent exécuter des scripts avec les droits administrateur."
+        body += "\n\nUne autorisation administrateur peut être demandée."
         self.window.confirm(f"Mettre à jour {plural(len(apps), 'application', 'applications')} ?", body,
                             "Tout mettre à jour",
                             lambda: self.window.run(command.argv, "Mise à jour de toutes les applications",
-                                                    command.display, on_done=lambda ok: self.scan()),
+                                                    command.display, on_done=lambda ok: self.scan(),
+                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]),
                             destructive=False)
 
     def remove(self, app):
-        if app.source == APPIMAGE:
+        if app.source == scanner.LOCAL:
+            self._remove_local(app)
+        elif app.source == APPIMAGE:
+            body = f"Le fichier {app.note} sera placé dans la corbeille."
+            if app.local_launchers:
+                body += "\n\nCes raccourcis personnels seront aussi mis à la corbeille :\n" + "\n".join(app.local_launchers)
             self.window.confirm(f"Supprimer {app.name} ?",
-                                f"Le fichier {app.note} sera placé dans la corbeille.",
+                                body,
                                 "Mettre à la corbeille", lambda: self._trash(app))
         elif app.source in (APT, DEB):
-            threading.Thread(target=lambda: GLib.idle_add(self._confirm_apt, app, scanner.removal_preview(app)),
-                             daemon=True).start()
+            threading.Thread(target=self._preview_removal, args=(app,), daemon=True).start()
         else:
             self._confirm_remove(app, f"{SOURCES[app.source]} « {app.ident} » sera désinstallé. "
                                       "Tes fichiers personnels sont conservés.")
 
-    def _confirm_apt(self, app, removed):
+    def _preview_removal(self, app):
+        try:
+            removed, error = scanner.removal_preview(app), None
+        except scanner.RemovalPreviewError as exc:
+            removed, error = None, str(exc)
+        GLib.idle_add(self._confirm_apt, app, removed, error)
+
+    def _confirm_apt(self, app, removed, error=None):
+        if error or removed is None:
+            self.window.confirm("Désinstallation bloquée", (error or "Simulation indisponible") +
+                                "\n\nAucune suppression n'a été lancée. Réessaie après avoir corrigé le problème APT.",
+                                "Compris", lambda: None, destructive=False)
+            return
         body = f"Le paquet « {app.ident} » sera désinstallé avec apt. Tes réglages et fichiers personnels sont conservés."
         others = [p for p in removed if p != app.ident]
         if others:
             body += (f"\n\n⚠ apt supprimerait aussi {plural(len(others), 'autre paquet', 'autres paquets')} : "
-                     + ", ".join(others[:12]) + ("…" if len(others) > 12 else ""))
+                     + "\n" + "\n".join(f"• {pkg}" for pkg in others))
         self._confirm_remove(app, body)
 
     def _confirm_remove(self, app, body):
         command = scanner.remove_command(app)
+        if app.local_launchers:
+            body += "\n\nAprès réussite, ces raccourcis personnels seront mis à la corbeille :\n" + "\n".join(app.local_launchers)
         self.window.confirm(f"Désinstaller {app.name} ?", body, "Désinstaller",
                             lambda: self.window.run(command.argv, f"Désinstallation de {app.name}", command.display,
-                                                    on_done=lambda ok: self.scan()))
+                                                    on_done=lambda ok: self._after_remove(app, ok)))
+
+    def _after_remove(self, app, ok):
+        if ok:
+            for filename in app.local_launchers:
+                path = Path(filename)
+                if (path.parent != Path(GLib.get_user_data_dir()) / 'applications' or path.is_symlink()
+                        or path.suffix != '.desktop' or not path.is_file()):
+                    continue
+                try:
+                    Gio.File.new_for_path(str(path)).trash(None)
+                except GLib.Error as error:
+                    self.window.toast(f"Application désinstallée, mais raccourci conservé : {error.message}")
+        self.scan()
+
+    def _remove_local(self, app):
+        try:
+            plan = local_removal.preview(app)
+        except (OSError, ValueError) as error:
+            self.window.toast(str(error))
+            return
+        if plan.bundle is None:
+            dialog = Adw.AlertDialog(heading=f"Retirer {app.name}",
+                body="Manette ne connaît pas le dossier d'installation de cette application locale. "
+                     "Tu peux le choisir pour préparer son retrait, ou retirer seulement son raccourci.",
+                default_response="cancel", close_response="cancel")
+            dialog.add_response("cancel", "Annuler")
+            dialog.add_response("folder", "Choisir le dossier d'installation…")
+            dialog.add_response("shortcut", "Retirer seulement le raccourci")
+            dialog.connect("response", lambda _d, response: self._choose_local_folder(app) if response == "folder" else
+                           self._confirm_local_plan(app, plan) if response == "shortcut" else None)
+            dialog.present(self.window)
+            return
+        self._confirm_local_plan(app, plan)
+
+    def _choose_local_folder(self, app):
+        dialog = Gtk.FileDialog(title=f"Dossier d'installation de {app.name}")
+        dialog.set_initial_folder(Gio.File.new_for_path(str(Path.home())))
+        dialog.select_folder(self.window, None, lambda d, result: self._local_folder_selected(app, d, result))
+
+    def _local_folder_selected(self, app, dialog, result):
+        try:
+            filename = dialog.select_folder_finish(result).get_path()
+            if filename is None:
+                raise ValueError("Choisis un dossier sur cet ordinateur.")
+            plan = local_removal.preview(app, filename)
+        except GLib.Error as error:
+            if not error.matches(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED):
+                self.window.toast(error.message)
+            return
+        except (OSError, ValueError) as error:
+            self.window.confirm("Retrait du dossier bloqué", str(error), "Compris", lambda: None, destructive=False)
+            return
+        self._confirm_local_plan(app, plan)
+
+    def _confirm_local_plan(self, app, plan):
+        if plan.bundle:
+            heading, label = f"Retirer {app.name} ?", "Mettre à la corbeille"
+            body = (f"Dossier de l'application :\n{plan.bundle}\n\nRaccourci :\n{plan.launcher}\n\n"
+                    "Tout le contenu de ce dossier sera mis à la corbeille. Les données situées ailleurs "
+                    "sont conservées. Ferme l'application avant de continuer. "
+                    "L'espace sera libéré lorsque tu videras la corbeille.")
+        else:
+            heading, label = f"Retirer le raccourci de {app.name} ?", "Retirer le raccourci"
+            body = (f"{plan.launcher}\n\nLe dossier de l'application n'a pas été identifié avec assez de certitude. "
+                    "Seul ce raccourci sera mis à la corbeille. Le programme et ses données resteront en place.")
+        self.window.confirm(heading, body, label, lambda: self._trash_local(app, plan))
+
+    def _trash_local(self, app, plan):
+        try:
+            local_removal.execute(app, plan, lambda p: Gio.File.new_for_path(str(p)).trash(None))
+            self.window.toast(f"{app.name} : éléments mis à la corbeille.")
+        except (OSError, ValueError, GLib.Error) as error:
+            self.window.toast(f"Retrait incomplet ou annulé : {error}. Vérifie aussi la corbeille.")
+        self.scan()
 
     def _trash(self, app):
         try:
@@ -204,7 +408,7 @@ class AppsPage(Gtk.Box):
             self.window.toast(f"Impossible de supprimer : {error.message}")
             return
         self.window.toast(f"{app.name} est dans la corbeille.")
-        self.scan()
+        self._after_remove(app, True)
 
 
 class AppRow(Adw.ActionRow):
@@ -230,17 +434,23 @@ class AppRow(Adw.ActionRow):
         self.add_suffix(Gtk.Label(label=GLib.format_size(app.size) if app.size else "—", width_chars=9, xalign=1,
                                   css_classes=["dim-label", "numeric"]))
 
+        data_button = Gtk.Button(icon_name="folder-open-symbolic", tooltip_text="Données et dossiers associés",
+                                 valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
+        data_button.connect("clicked", lambda *_: page.show_data(app))
+        self.add_suffix(data_button)
+
         if scanner.update_command(app):
             button = Gtk.Button(label="Mettre à jour", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
             button.connect("clicked", lambda *_: page.update(app))
             self.add_suffix(button)
-        if app.info:
+        if app.info or app.source == APPIMAGE:
             button = Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Lancer",
                                 valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
             button.connect("clicked", lambda *_: page.launch(app))
             self.add_suffix(button)
         if app.source in REMOVABLE:
-            button = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Désinstaller",
+            button = Gtk.Button(icon_name="user-trash-symbolic",
+                                tooltip_text="Retirer l'application ou son raccourci" if app.source == scanner.LOCAL else "Désinstaller",
                                 valign=Gtk.Align.CENTER, css_classes=["flat", "circular", "remove-button"])
             button.connect("clicked", lambda *_: page.remove(app))
             self.add_suffix(button)

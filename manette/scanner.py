@@ -6,9 +6,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
@@ -49,6 +50,7 @@ class App:
     update_url: str | None = None
     note: str = ""
     installation: str = ""  # Flatpak : system ou user
+    local_launchers: list[str] = field(default_factory=list)
 
     @property
     def icon(self) -> Gio.Icon | None:
@@ -61,16 +63,29 @@ class Command:
     display: str
 
 
-def _run(*argv: str, timeout: int = 30) -> str:
+@dataclass
+class ScanResult:
+    apps: list[App]
+    warnings: list[str] = field(default_factory=list)
+
+
+def _run(*argv: str, timeout: int = 30, warnings: list[str] | None = None) -> str:
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
                              env={**os.environ, "LC_ALL": "C.UTF-8"})
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as error:
+        if warnings is not None:
+            warnings.append(f"{argv[0]} : vérification impossible ({error})")
+        return ""
+    if out.returncode and warnings is not None:
+        detail = out.stderr.strip() or f"code {out.returncode}"
+        warnings.append(f"{argv[0]} : {detail}")
         return ""
     return out.stdout
 
 
-def scan() -> list[App]:
+def scan() -> ScanResult:
+    warnings = []
     flatpaks, snaps, appimages, debs = {}, {}, {}, {}
     for info in Gio.AppInfo.get_all():
         if not info.should_show() or not isinstance(info, Gio.DesktopAppInfo):
@@ -85,9 +100,10 @@ def scan() -> list[App]:
         else:
             debs[filename] = info
 
-    apps = [*_scan_debs(debs), *_scan_flatpaks(flatpaks), *_scan_snaps(snaps), *_scan_appimages(appimages)]
+    apps = [*_scan_debs(debs, warnings), *_scan_flatpaks(flatpaks, warnings),
+            *_scan_snaps(snaps, warnings), *_scan_appimages(appimages)]
     apps.sort(key=lambda a: a.name.casefold())
-    return apps
+    return ScanResult(apps, warnings)
 
 
 def _snap_from_path(filename: str) -> str | None:
@@ -106,24 +122,45 @@ def _appimage_path(info: Gio.DesktopAppInfo) -> str | None:
 
 # --- Paquets .deb ---------------------------------------------------------
 
-def _scan_debs(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
+def _scan_debs(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> list[App]:
+    # Une copie personnelle d'un lanceur peut masquer celui fourni par le paquet.
+    fallbacks = {}
+    for path, info in infos.items():
+        desktop_id = info.get_id() or ""
+        if not desktop_id or Path(desktop_id).name != desktop_id:
+            continue
+        for base in GLib.get_system_data_dirs():
+            candidate = Path(base) / "applications" / desktop_id
+            if str(candidate) == path or not candidate.is_file():
+                continue
+            try:
+                original = Gio.DesktopAppInfo.new_from_filename(str(candidate))
+                if original and original.get_executable() == info.get_executable():
+                    fallbacks[path] = str(candidate)
+                    break
+            except (TypeError, GLib.Error):
+                continue
     owners = {}
     if infos:
-        for line in _run("dpkg", "-S", *infos).splitlines():
+        for line in _run("dpkg", "-S", *infos, *fallbacks.values()).splitlines():
             if line.startswith("diversion ") or ": " not in line:
                 continue
             pkgs, path = line.rsplit(": ", 1)
             owners[path] = pkgs.split(",")[0].strip().split(":")[0]
+    for path, original in fallbacks.items():
+        if path not in owners and original in owners:
+            owners[path] = owners[original]
 
     pkgs = sorted(set(owners.values()))
     meta = {}
     if pkgs:
-        out = _run("dpkg-query", "-W", "-f=${Package}\t${Version}\t${Installed-Size}\t${Homepage}\n", *pkgs)
+        out = _run("dpkg-query", "-W", "-f=${Package}\t${Version}\t${Installed-Size}\t${Homepage}\n", *pkgs,
+                   warnings=warnings)
         for line in out.splitlines():
             pkg, version, size, homepage = (line.split("\t") + ["", "", ""])[:4]
             meta[pkg] = (version, int(size) * 1024 if size.isdigit() else None, homepage)
-    manual = _manual_packages(pkgs)
-    upgradable = _apt_upgradable()
+    manual = _manual_packages(pkgs, warnings)
+    upgradable = _apt_upgradable(warnings)
 
     apps, seen = [], set()
     for path, info in infos.items():
@@ -137,32 +174,36 @@ def _scan_debs(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
         seen.add(pkg)
         version, size, homepage = meta.get(pkg, ("", None, ""))
         app = App(info.get_display_name(), DEB if pkg in manual else APT, pkg, version, size, info)
+        launcher_dir = Path(GLib.get_user_data_dir()) / "applications"
+        app.local_launchers = [p for p in infos if owners.get(p) == pkg and Path(p).parent == launcher_dir]
         if app.source == APT:
             app.update = upgradable.get(pkg)
         else:
-            _check_github(app, homepage)
+            _check_github(app, homepage, warnings)
         apps.append(app)
     return apps
 
 
-def _manual_packages(pkgs: list[str]) -> set[str]:
+def _manual_packages(pkgs: list[str], warnings: list[str] | None = None) -> set[str]:
     """Paquets dont la version installée ne vient d'aucun dépôt APT."""
-    manual, current, has_repo = set(), None, False
-    for line in _run("apt-cache", "policy", *pkgs).splitlines() if pkgs else []:
+    manual, current, has_repo, installed_row = set(), None, False, False
+    for line in _run("apt-cache", "policy", *pkgs, warnings=warnings).splitlines() if pkgs else []:
         if line and not line[0].isspace() and line.endswith(":"):
             if current and not has_repo:
                 manual.add(current)
-            current, has_repo = line[:-1].split(":")[0], False
-        elif (m := re.match(r"\s+-?\d+ (\S+)", line)) and m.group(1) != "/var/lib/dpkg/status":
+            current, has_repo, installed_row = line[:-1].split(":")[0], False, False
+        elif re.match(r"\s+(?:\*\*\*\s+)?\S+\s+-?\d+\s*$", line):
+            installed_row = line.lstrip().startswith("***")
+        elif installed_row and (m := re.match(r"\s+-?\d+ (\S+)", line)) and m.group(1) != "/var/lib/dpkg/status":
             has_repo = True
     if current and not has_repo:
         manual.add(current)
     return manual
 
 
-def _apt_upgradable() -> dict[str, str]:
+def _apt_upgradable(warnings: list[str] | None = None) -> dict[str, str]:
     result = {}
-    for line in _run("apt", "list", "--upgradable").splitlines():
+    for line in _run("apt", "list", "--upgradable", warnings=warnings).splitlines():
         if m := re.match(r"([^/\s]+)/\S+ (\S+) ", line):
             result[m.group(1)] = m.group(2)
     return result
@@ -178,7 +219,7 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(n) for n in re.findall(r"\d+", version.split(":", 1)[-1]))
 
 
-def _check_github(app: App, homepage: str) -> None:
+def _check_github(app: App, homepage: str, warnings: list[str]) -> None:
     """Pour un .deb installé à la main, cherche une version plus récente sur GitHub."""
     repo = KNOWN_GITHUB.get(app.ident)
     if m := re.match(r"https?://github\.com/([^/\s]+/[^/\s#?]+)", homepage or ""):
@@ -194,6 +235,7 @@ def _check_github(app: App, homepage: str) -> None:
             release = json.load(response)
     except (OSError, ValueError):
         app.note = f"GitHub injoignable ({repo})"
+        warnings.append(f"{app.name} : {app.note}")
         return
     latest = release.get("tag_name", "").lstrip("vV")
     if not latest or _version_key(latest) <= _version_key(app.version):
@@ -217,15 +259,21 @@ def _parse_size(text: str) -> int | None:
     return int(float(m.group(1).replace(",", ".")) * _UNITS.get(m.group(2).lower(), 1))
 
 
-def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
+def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> list[App]:
+    if not shutil.which("flatpak"):
+        if infos:
+            warnings.append("Flatpak introuvable : applications non vérifiées")
+        return []
     updates = {}
-    out = _run("flatpak", "remote-ls", "--updates", "--app", "--columns=application,version", timeout=60)
+    out = _run("flatpak", "remote-ls", "--updates", "--app", "--columns=application,version", timeout=60,
+               warnings=warnings)
     for line in out.splitlines():
         fid, _, version = line.partition("\t")
         if fid:
             updates[fid] = version or "nouvelle révision"
     apps = []
-    for line in _run("flatpak", "list", "--app", "--columns=application,name,version,size,installation").splitlines():
+    for line in _run("flatpak", "list", "--app", "--columns=application,name,version,size,installation",
+                     warnings=warnings).splitlines():
         parts = line.split("\t")
         if len(parts) != 5:
             continue
@@ -239,16 +287,16 @@ def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
     return apps
 
 
-def _scan_snaps(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
+def _scan_snaps(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> list[App]:
     if not infos:
         return []
     updates = {}
-    for line in _run("snap", "refresh", "--list").splitlines()[1:]:
+    for line in _run("snap", "refresh", "--list", warnings=warnings).splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 2:
             updates[parts[0]] = parts[1]
     rows = {}
-    for line in _run("snap", "list").splitlines()[1:]:
+    for line in _run("snap", "list", warnings=warnings).splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 3:
             rows[parts[0]] = (parts[1], parts[2])
@@ -276,7 +324,11 @@ def _scan_appimages(infos: dict[str, Gio.DesktopAppInfo]) -> list[App]:
         name = info.get_display_name() if info else re.split(r"[-_ ]v?\d", stem)[0] or stem
         version = m.group(0) if (m := re.search(r"\d+(\.\d+)+", stem)) else ""
         size = os.path.getsize(path) if os.path.exists(path) else None
-        apps.append(App(name, APPIMAGE, path, version, size, info, note=_short_path(path)))
+        app = App(name, APPIMAGE, path, version, size, info, note=_short_path(path))
+        launcher = info.get_filename() if info else None
+        if launcher and Path(launcher).parent == Path(GLib.get_user_data_dir()) / 'applications':
+            app.local_launchers = [launcher]
+        apps.append(app)
     return apps
 
 
@@ -382,6 +434,22 @@ def remove_command(app: App) -> Command | None:
     return None
 
 
+class RemovalPreviewError(RuntimeError):
+    """La suppression ne doit pas être proposée sans simulation réussie."""
+
+
+def apt_removal_preview(*args: str) -> list[str]:
+    """Simulation sans droits ; une erreur ne représente jamais une liste vide."""
+    try:
+        result = subprocess.run(["apt-get", "-s", *args], capture_output=True, text=True, timeout=30,
+                                env={**os.environ, "LC_ALL": "C.UTF-8"})
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RemovalPreviewError(f"Simulation APT impossible : {error}") from error
+    if result.returncode:
+        detail = result.stderr.strip() or f"code {result.returncode}"
+        raise RemovalPreviewError(f"Simulation APT échouée : {detail}")
+    return re.findall(r"^Remv (\S+)", result.stdout, re.M)
+
+
 def removal_preview(app: App) -> list[str]:
-    """Paquets qu'apt supprimerait en même temps (simulation, sans droits)."""
-    return re.findall(r"^Remv (\S+)", _run("apt-get", "-s", "remove", app.ident), re.M)
+    return apt_removal_preview("remove", app.ident)

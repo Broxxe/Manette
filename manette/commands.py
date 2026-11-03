@@ -27,7 +27,7 @@ class Custom:
     description: str = ""
     icon: str = "utilities-terminal-symbolic"
     root: bool = False
-    confirm: bool = False
+    confirm: bool = True
     terminal: bool = False  # pour les commandes interactives (htop, ssh…)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 

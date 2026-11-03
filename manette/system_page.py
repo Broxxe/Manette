@@ -1,10 +1,13 @@
 """Page Système : état de la machine, disques et actions toutes prêtes."""
 
 import threading
+from dataclasses import replace
+from pathlib import Path
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from . import system
+from . import scanner, system
+from .storage_dialog import StorageDialog
 from .widgets import StatCard, icon_tile, page_box, page_scroller, stat_grid, usage_bar
 
 
@@ -37,9 +40,10 @@ class SystemPage(Gtk.Box):
         row = Adw.ActionRow(title=action.title, subtitle=action.subtitle)
         row.add_prefix(icon_tile(action.icon))
         if action.root:
-            row.add_suffix(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Demande ton mot de passe",
+            row.add_suffix(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Autorisation administrateur requise",
                                      css_classes=["dim-label"]))
-        button = Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Lancer",
+        button = Gtk.Button(icon_name="folder-open-symbolic" if action.view else "media-playback-start-symbolic",
+                            tooltip_text="Afficher le résumé" if action.view else "Lancer",
                             valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
         button.connect("clicked", lambda *_: self._run(action))
         row.add_suffix(button)
@@ -49,13 +53,43 @@ class SystemPage(Gtk.Box):
         return row
 
     def _run(self, action: system.Action):
+        if action.view == "storage":
+            StorageDialog(self.window).present(self.window)
+            return
+        if action.preview_autoremove:
+            threading.Thread(target=self._preview_autoremove, args=(action,), daemon=True).start()
+            return
         def go():
             self.window.run(["bash", "-c", action.command], action.title, action.display or action.command.strip(),
-                            on_done=lambda ok: self._after(action))
+                            on_done=lambda ok: self._after(action),
+                            space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]
+                            if action.check_space else None)
         if action.confirm:
-            self.window.confirm(f"{action.title} ?", action.subtitle + ".", "Lancer", go, destructive=False)
+            self.window.confirm(f"{action.title} ?", action.confirmation or action.subtitle + ".",
+                                "Supprimer" if action.destructive else "Lancer", go,
+                                destructive=action.destructive)
         else:
             go()
+
+    def _preview_autoremove(self, action):
+        try:
+            packages, error = scanner.apt_removal_preview("autoremove"), None
+        except scanner.RemovalPreviewError as exc:
+            packages, error = None, str(exc)
+        GLib.idle_add(self._confirm_autoremove, action, packages, error)
+
+    def _confirm_autoremove(self, action, packages, error):
+        if error or packages is None:
+            self.window.confirm("Nettoyage APT bloqué", (error or "Simulation indisponible") +
+                                "\n\nAucune suppression n'a été lancée.", "Compris", lambda: None,
+                                destructive=False)
+            return
+        if not packages:
+            self.window.toast("APT n'a trouvé aucun paquet à supprimer.")
+            return
+        body = "APT propose de supprimer ces paquets :\n\n" + "\n".join(f"• {pkg}" for pkg in packages)
+        body += "\n\nVérifie cette liste avant de confirmer."
+        self._run(replace(action, preview_autoremove=False, confirmation=body))
 
     def _after(self, action):
         self.refresh()
