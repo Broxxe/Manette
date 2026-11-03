@@ -1,8 +1,10 @@
-# Manette
+# Manette — Linux application and system manager
 
 English · [Français](README.fr.md)
 
-A GTK 4 + libadwaita desktop app for managing applications and everyday system tasks on Ubuntu and APT-based Linux systems.
+A graphical application manager and system maintenance tool for Ubuntu: manage APT, Flatpak, Snap and AppImage applications, check system updates, analyze disk usage and monitor CPU/GPU resources.
+
+An independent GPLv3 project built with Python, GTK 4 and libadwaita. See [Compatibility](#compatibility) for supported dependencies and the tested environment.
 
 <img width="1266" height="816" alt="Capture d’écran du 2026-11-03 17-51-38" src="https://github.com/user-attachments/assets/fbf361f0-2017-4e8a-9505-23dd8f1bb172" />
 
