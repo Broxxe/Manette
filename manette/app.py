@@ -219,6 +219,7 @@ class ManetteApp(Adw.Application):
 
     def _about(self):
         Adw.AboutDialog(application_name="Manette", application_icon=APP_ID, version="0.1",
+                        license_type=Gtk.License.GPL_3_0_ONLY, copyright="© 2026 Broxxe",
                         comments=tr('Applications, système et commandes accessibles en quelques clics.')).present(
             self.props.active_window)
 

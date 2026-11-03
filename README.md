@@ -14,9 +14,31 @@ A GTK 4 + libadwaita desktop app for managing applications and everyday system t
 - **Custom commands:** save commands as buttons, with optional terminal execution.
 - **History:** review the last 500 operations, filter failures and copy reports with **Ctrl+H**. Show the live console with **Ctrl+J**.
 
+## Compatibility
+
+| Environment | Status |
+| --- | --- |
+| Ubuntu 26.04 LTS, x86_64 | Current development environment: 26.04.1; local tests and GTK checks pass. |
+| Ubuntu 22.04 / 24.04, standard packages | Not compatible with the current interface dependencies. |
+| Other Linux distributions, desktops or architectures | Not validated; package maintenance targets APT-based systems. |
+
+API baseline: **Python 3.10+, GTK 4.18+, libadwaita 1.7+ and PyGObject**. Meeting these versions is not a tested-platform guarantee. The reference environment uses Python 3.14.4, GTK 4.22.4 and libadwaita 1.9.1.
+
+The interface uses [Adw.WrapBox, introduced in libadwaita 1.7](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.WrapBox.html), and [GTK CSS variables](https://docs.gtk.org/gtk4/css-properties.html). Ubuntu 24.04 provides [libadwaita 1.5](https://packages.ubuntu.com/fr/noble/libadwaita-1-0). Supporting it requires code adaptations or a suitable runtime package.
+
+Flatpak, Snap, firmware tools and GPU tools enable their respective features when installed. Service management needs systemd; administrator actions need `pkexec` and a desktop authorization agent. GPU metrics currently cover NVIDIA (`nvidia-smi`) and AMD (`sysfs`), depending on driver support; Intel GPU metrics are not implemented. Background transparency depends on desktop support.
+
 ## Run
 
-Requires Python 3, PyGObject, GTK 4 and a recent libadwaita. `python3-apt` enables APT space estimates; Flatpak and Snap support requires their respective tools.
+On the reference Ubuntu environment, install the runtime dependencies if needed:
+
+```sh
+sudo apt install python3 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-apt pkexec curl
+```
+
+`python3-apt` enables APT space estimates. This command does not make older Ubuntu releases compatible.
+
+Start from the repository:
 
 ```sh
 ./bin/manette
@@ -45,3 +67,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 Tests simulate package managers and privileged operations without changing installed applications.
+
+## License
+
+Copyright © 2026 Broxxe. Manette is licensed under the **GNU General Public License v3.0 only** (`GPL-3.0-only`); see [LICENSE](LICENSE). You may use, modify and redistribute it, including commercially. Redistributed modified versions must provide the corresponding source under GPLv3 and retain the required notices. No warranty is provided.
