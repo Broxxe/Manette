@@ -39,14 +39,22 @@ class PresentationTests(unittest.TestCase):
         page = Mock()
         page.apps = [App('Example', APT, 'example'), App('Other', FLATPAK, 'other')]
         page._matches = lambda app, key: AppsPage._matches(page, app, key)
-        page.filter, page.query = 'apt', 'missing'
+        grid_section, list_section = Mock(apps=page.apps), Mock(apps=page.apps)
+        page.sections = {'grid': [grid_section], 'list': [list_section]}
+        page.filter, page.query, page.category = 'apt', 'missing', 'all'
+        page._visible_app = lambda app: AppsPage._visible_app(page, app)
         AppsPage._invalidate_filter(page)
-        page.list.invalidate_filter.assert_called_once()
-        page.grid.invalidate_filter.assert_called_once()
+        grid_section.body.invalidate_filter.assert_called_once()
+        list_section.body.invalidate_filter.assert_called_once()
+        grid_section.set_visible.assert_called_with(False)
+        list_section.set_visible.assert_called_with(False)
         page.grid_empty.set_visible.assert_called_with(True)
         page.query = 'example'
         AppsPage._invalidate_filter(page)
         page.grid_empty.set_visible.assert_called_with(False)
+        page.list_empty.set_visible.assert_called_with(False)
+        grid_section.count.set_label.assert_called_with('1')
+        list_section.count.set_label.assert_called_with('1')
 
     def test_high_contrast_overrides_translucency(self):
         window = Mock()

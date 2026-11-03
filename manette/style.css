@@ -123,6 +123,21 @@ button.app-play {
   padding: 0;
 }
 .app-row { min-height: 80px; }
+.category-heading { min-height: 28px; }
+button.category-toggle {
+  padding: 4px 6px;
+  background: transparent;
+  box-shadow: none;
+}
+button.category-toggle:hover {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.category-count {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-size: 0.85em;
+}
 
 /* Seul le fond devient translucide ; textes et contrôles restent opaques. */
 window.manette-window.translucent {

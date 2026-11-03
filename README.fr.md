@@ -9,6 +9,7 @@ Un projet indépendant sous GPLv3, développé avec Python, GTK 4 et libadwaita.
 ## Fonctionnalités
 
 - **Applications :** lancer, mettre à jour et retirer les applications détectées : APT, Flatpak, Snap, AppImage et applications locales. Installer des fichiers `.deb` et Flatpak téléchargés ou lancer des AppImages.
+- **Catégories :** classement automatique par usage (système, jeux, travail, création, développement…), avec sections repliables et compteurs dans les vues grille et liste. Un clic sur le titre replie ou déplie la catégorie ; ce choix est mémorisé et partagé entre les vues. Recherche, filtres, favoris et tri fonctionnent dans ces sections. Chaque application apparaît une seule fois ; le filtre retrouve aussi ses catégories secondaires. Les informations manquantes donnent « Autres ». Le menu **⋯ → Modifier la catégorie…** permet un choix personnel.
 - **Interface adaptable :** cartes compactes ou liste, favoris, français/anglais et opacité du fond réglable.
 - **Recherche globale :** retrouver applications, commandes, réglages et dossiers associés avec **Ctrl+K**.
 - **Stockage :** occupation graphique des dossiers, données associées aux applications, estimation avant installation et bilan des données conservées après retrait.

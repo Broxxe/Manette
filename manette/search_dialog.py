@@ -14,7 +14,7 @@ class SearchDialog(Adw.Dialog):
         self.window, self.closed = window, False
         self.connect('closed', lambda *_: setattr(self, 'closed', True))
         self.apps = list(window.apps_page.apps)
-        self.items = [search.Item(app.name, app.ident, 'app', app, window.apps_page.is_favorite(app)) for app in self.apps]
+        self.items = [search.Item(app.name, app.ident + ' · ' + window.apps_page.category_labels(app), 'app', app, window.apps_page.is_favorite(app)) for app in self.apps]
         self.items += [search.Item(item.name, item.description + ' ' + item.command, 'command', item,
                                   window.custom_page.is_favorite(item)) for item in window.custom_page.items]
         self.items += [search.Item(item.title, item.subtitle, 'system', item) for item in window.system_page.actions]

@@ -9,7 +9,9 @@ from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
-from . import favorites, local_apps, local_removal, preferences, scanner, space
+from . import categories, favorites, local_apps, local_removal, preferences, scanner, space
+from .category_dialog import CategoryDialog
+from .search import normalize
 from .scanner import APPIMAGE, APT, DEB, SOURCES
 from .data_dialog import DataDialog
 from .widgets import StatCard, page_box, page_scroller, plural, stat_grid
@@ -24,6 +26,10 @@ class AppsPage(Gtk.Box):
         self.window = window
         self.apps: list[scanner.App] = []
         self.filter = "all"
+        self.category = "all"
+        self.category_overrides = {}
+        self.collapsed_categories = set()
+        self._category_rebuilding = False
         self.query = ""
         self.scanning = False
         try:
@@ -31,7 +37,10 @@ class AppsPage(Gtk.Box):
         except (OSError, ValueError):
             self.favorites = set()
         try:
-            mode = preferences.load().get('applications_view', 'grid')
+            settings = preferences.load()
+            mode = settings.get('applications_view', 'grid')
+            self.category_overrides = categories.overrides_from(settings)
+            self.collapsed_categories = categories.collapsed_from(settings)
         except (OSError, ValueError):
             mode = 'grid'
         self.view_mode = mode if mode in ('grid', 'list') else 'grid'
@@ -89,27 +98,32 @@ class AppsPage(Gtk.Box):
         tools.append(view_row)
         self.chips = Adw.WrapBox(child_spacing=6, line_spacing=6)
         tools.append(self.chips)
+        category_row = Gtk.Box(spacing=12)
+        category_row.append(Gtk.Label(label=tr('Catégorie'), xalign=0, hexpand=True, css_classes=['dim-label']))
+        self.category_keys = ['all']
+        self.category_choice = Gtk.DropDown.new_from_strings([tr('Toutes les catégories')])
+        self.category_choice.set_tooltip_text(tr('Classement d’après les catégories déclarées par les applications. Plusieurs catégories sont possibles.'))
+        self.category_choice.connect('notify::selected', self._on_category)
+        category_row.append(self.category_choice)
+        tools.append(category_row)
         content.append(tools)
 
-        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
-        self.list.set_placeholder(Gtk.Label(label=tr('Aucune application ne correspond.'), margin_top=24,
-                                            margin_bottom=24, css_classes=["dim-label"]))
-        self.list.set_filter_func(self._filter_row)
-        self.list.set_sort_func(self._sort_rows)
-        self.grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
-                                min_children_per_line=1, max_children_per_line=64,
-                                column_spacing=12, row_spacing=12, valign=Gtk.Align.START,
-                                css_classes=['app-grid'])
-        self.grid.set_filter_func(lambda child: self._filter_row(child.get_child()))
-        self.grid.set_sort_func(lambda a, b: self._sort_rows(a.get_child(), b.get_child()))
+        self.sections = {'grid': [], 'list': []}
+        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        self.grid = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         grid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         grid_box.append(self.grid)
         self.grid_empty = Gtk.Label(label=tr('Aucune application ne correspond.'), margin_top=24,
                                      margin_bottom=24, visible=False, css_classes=['dim-label'])
         grid_box.append(self.grid_empty)
+        list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        list_box.append(self.list)
+        self.list_empty = Gtk.Label(label=tr('Aucune application ne correspond.'), margin_top=24,
+                                     margin_bottom=24, visible=False, css_classes=['dim-label'])
+        list_box.append(self.list_empty)
         self.view_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
         self.view_stack.add_named(grid_box, 'grid')
-        self.view_stack.add_named(self.list, 'list')
+        self.view_stack.add_named(list_box, 'list')
         self.view_stack.set_visible_child_name(self.view_mode)
         content.append(self.view_stack)
         for key, button in self.view_buttons.items():
@@ -150,12 +164,7 @@ class AppsPage(Gtk.Box):
         self.scan_warning.set_text(tr('Vérification incomplète :\n') + "\n".join(result.warnings))
         self.scan_warning.set_visible(bool(result.warnings))
         self.apps = apps
-        self.list.remove_all()
-        self.grid.remove_all()
-        for app in apps:
-            self.list.append(AppRow(app, self))
-            self.grid.append(AppCard(app, self))
-            self.grid.get_last_child().set_focusable(False)
+        self._render_apps()
 
         updates = [a for a in apps if a.update]
         total = sum(a.size or 0 for a in apps)
@@ -170,6 +179,7 @@ class AppsPage(Gtk.Box):
                               + ", ".join(a.name for a in updates[:4]) + ("…" if len(updates) > 4 else ""))
         self.banner.set_revealed(bool(updates))
         self._build_chips()
+        self._refresh_category_choices()
         self._invalidate_filter()
         self.stack.set_visible_child_name("list")
 
@@ -203,14 +213,81 @@ class AppsPage(Gtk.Box):
         except (OSError, ValueError) as error:
             self.window.toast(tr('Favoris non enregistrés : {value0}', value0=error))
             return
-        self.list.remove_all()
-        self.grid.remove_all()
-        for item in self.apps:
-            self.list.append(AppRow(item, self))
-            self.grid.append(AppCard(item, self))
-            self.grid.get_last_child().set_focusable(False)
+        self._render_apps()
         self._build_chips()
+        self._refresh_category_choices()
         self._invalidate_filter()
+
+    def _render_apps(self):
+        groups = categories.grouped(self.apps, self.categories_for, self.category)
+        for mode, container in (('grid', self.grid), ('list', self.list)):
+            while child := container.get_first_child():
+                container.remove(child)
+            self.sections[mode] = []
+            for key, members in groups:
+                section = AppSection(key, members, mode, self)
+                container.append(section)
+                self.sections[mode].append(section)
+
+    def categories_for(self, app):
+        return categories.for_app(app, self.category_overrides)
+
+    def set_category_collapsed(self, key, collapsed):
+        if key not in categories.CATEGORIES or (key in self.collapsed_categories) == collapsed:
+            return
+        updated = set(self.collapsed_categories)
+        if collapsed:
+            updated.add(key)
+        else:
+            updated.discard(key)
+        self.collapsed_categories = updated
+        for sections in self.sections.values():
+            for section in sections:
+                if section.key == key:
+                    section.set_expanded(not collapsed)
+        try:
+            preferences.save(collapsed_categories=sorted(updated))
+        except (OSError, ValueError) as error:
+            self.window.toast(tr('Le repli des catégories n’a pas pu être enregistré : {value0}', value0=error))
+
+    def category_labels(self, app):
+        return categories.labels(self.categories_for(app))
+
+    def edit_category(self, app):
+        CategoryDialog(app, self).present(self.window)
+
+    def set_category(self, app, choice):
+        try:
+            self.category_overrides = categories.save_choice(app, choice)
+        except (OSError, ValueError) as error:
+            self.window.toast(tr('Catégorie non enregistrée : {value0}', value0=error))
+            return False
+        self._render_apps()
+        self._refresh_category_choices()
+        self._invalidate_filter()
+        return True
+
+    def _refresh_category_choices(self):
+        counts = {key: 0 for key in categories.CATEGORIES}
+        for app in self.apps:
+            for key in self.categories_for(app):
+                counts[key] += 1
+        self._category_rebuilding = True
+        self.category_keys = ['all', *categories.CATEGORIES]
+        labels = [f"{tr('Toutes les catégories')} ({len(self.apps)})"]
+        labels.extend(f'{label} ({counts[key]})' for key, label in categories.CATEGORIES.items())
+        self.category_choice.set_model(Gtk.StringList.new(labels))
+        self.category_choice.set_selected(self.category_keys.index(self.category))
+        self._category_rebuilding = False
+
+    def _on_category(self, dropdown, *unused):
+        if self._category_rebuilding:
+            return
+        index = dropdown.get_selected()
+        if index < len(self.category_keys):
+            self.category = self.category_keys[index]
+            self._render_apps()
+            self._invalidate_filter()
 
     def _set_filter(self, key):
         if self.filter != key:
@@ -234,20 +311,31 @@ class AppsPage(Gtk.Box):
             self.window.toast(tr("Le choix d'affichage n'a pas pu être enregistré."))
 
     def _invalidate_sort(self):
-        self.list.invalidate_sort()
-        self.grid.invalidate_sort()
+        for sections in self.sections.values():
+            for section in sections:
+                section.body.invalidate_sort()
 
     def _invalidate_filter(self):
-        self.list.invalidate_filter()
-        self.grid.invalidate_filter()
-        self.grid_empty.set_visible(not any(self._matches(app, self.filter) and
-            (not self.query or self.query in f'{app.name} {app.ident}'.casefold()) for app in self.apps))
+        for sections in self.sections.values():
+            for section in sections:
+                section.body.invalidate_filter()
+                count = sum(self._visible_app(app) for app in section.apps)
+                section.count.set_label(str(count))
+                section.set_visible(bool(count))
+        empty = not any(self._visible_app(app) for app in self.apps)
+        self.grid_empty.set_visible(empty)
+        self.list_empty.set_visible(empty)
 
-    def _filter_row(self, row):
-        app = row.app
+    def _visible_app(self, app):
         if not self._matches(app, self.filter):
             return False
-        return not self.query or self.query in f"{app.name} {app.ident}".casefold()
+        if self.category != 'all' and self.category not in self.categories_for(app):
+            return False
+        text = f'{app.name} {app.ident} {self.category_labels(app)}'
+        return not self.query or normalize(self.query) in normalize(text)
+
+    def _filter_row(self, row):
+        return self._visible_app(row.app)
 
     def _sort_rows(self, a, b):
         left_favorite, right_favorite = self.is_favorite(a.app), self.is_favorite(b.app)
@@ -539,7 +627,8 @@ def app_options(app, page):
     popover = Gtk.Popover(child=body)
     actions = [(tr('Données et dossiers associés'), lambda: page.show_data(app), False),
                (tr('Retirer des favoris') if page.is_favorite(app) else tr('Ajouter aux favoris'),
-                lambda: page.toggle_favorite(app), False)]
+                lambda: page.toggle_favorite(app), False),
+               (tr('Modifier la catégorie…'), lambda: page.edit_category(app), False)]
     if scanner.update_command(app):
         actions.append((tr('Mettre à jour'), lambda: page.update(app), False))
     if app.source in REMOVABLE:
@@ -556,6 +645,51 @@ def app_options(app, page):
     return button
 
 
+class AppSection(Gtk.Box):
+    def __init__(self, key, apps, mode, page):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.key, self.apps = key, apps
+        header = Gtk.Box(spacing=10, css_classes=['category-heading'])
+        header.append(Gtk.Image(icon_name=categories.ICONS[key], css_classes=['accent']))
+        header.append(Gtk.Label(label=categories.CATEGORIES[key], xalign=0, css_classes=['title-3']))
+        self.count = Gtk.Label(label=str(len(apps)), css_classes=['category-count', 'numeric'])
+        header.append(self.count)
+        header.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True, valign=Gtk.Align.CENTER))
+        header.set_tooltip_text(tr('Les applications sont regroupées par catégorie. Chacune apparaît une seule fois ; le filtre inclut aussi ses catégories secondaires.'))
+        self.chevron = Gtk.Image(icon_name='pan-down-symbolic')
+        header.append(self.chevron)
+        self.toggle = Gtk.ToggleButton(child=header, css_classes=['flat', 'category-toggle'])
+        self.append(self.toggle)
+        if mode == 'grid':
+            self.body = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                min_children_per_line=1, max_children_per_line=64, column_spacing=12, row_spacing=12,
+                halign=Gtk.Align.START, valign=Gtk.Align.START, css_classes=['app-grid'])
+            self.body.set_filter_func(lambda child: page._filter_row(child.get_child()))
+            self.body.set_sort_func(lambda a, b: page._sort_rows(a.get_child(), b.get_child()))
+            for app in apps:
+                self.body.append(AppCard(app, page))
+                self.body.get_last_child().set_focusable(False)
+        else:
+            self.body = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=['boxed-list'])
+            self.body.set_filter_func(page._filter_row)
+            self.body.set_sort_func(page._sort_rows)
+            for app in apps:
+                self.body.append(AppRow(app, page))
+        self.revealer = Gtk.Revealer(child=self.body, transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+                                     transition_duration=150)
+        self.append(self.revealer)
+        self.set_expanded(key not in page.collapsed_categories)
+        self.toggle.connect('toggled', lambda button: page.set_category_collapsed(key, not button.get_active()))
+
+    def set_expanded(self, expanded):
+        self.toggle.set_active(expanded)
+        self.toggle.set_tooltip_text(tr('Replier {value0}', value0=categories.CATEGORIES[self.key]) if expanded else
+                                     tr('Déplier {value0}', value0=categories.CATEGORIES[self.key]))
+        self.toggle.update_state([Gtk.AccessibleState.EXPANDED], [int(expanded)])
+        self.revealer.set_reveal_child(expanded)
+        self.chevron.set_from_icon_name('pan-down-symbolic' if expanded else 'pan-end-symbolic')
+
+
 class AppCard(Gtk.Box):
     def __init__(self, app, page):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8, hexpand=True,
@@ -569,6 +703,9 @@ class AppCard(Gtk.Box):
         self.append(top)
         self.append(Gtk.Label(label=('★ ' if page.is_favorite(app) else '') + app.name, xalign=0, wrap=True, lines=2, max_width_chars=20,
                                ellipsize=Pango.EllipsizeMode.END, css_classes=['heading', 'app-card-title']))
+        category = page.category_labels(app)
+        self.append(Gtk.Label(label=category, xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                               max_width_chars=20, tooltip_text=category, css_classes=['caption', 'dim-label']))
         detail = ' · '.join([app.version or tr('version inconnue'), GLib.format_size(app.size) if app.size else '—'])
         self.append(Gtk.Label(label=detail, xalign=0, ellipsize=Pango.EllipsizeMode.END,
                                max_width_chars=20, tooltip_text=detail, css_classes=['caption', 'dim-label']))
@@ -591,7 +728,7 @@ class AppRow(Adw.ActionRow):
 
         self.add_prefix(app_icon(app, 44))
 
-        details = [d for d in (app.version or tr('version inconnue'), app.note) if d]
+        details = [d for d in (page.category_labels(app), app.version or tr('version inconnue'), app.note) if d]
         subtitle = GLib.markup_escape_text(" · ".join(details))
         if app.update:
             subtitle += tr('\n<b>→ {value0} disponible</b>', value0=GLib.markup_escape_text(app.update))

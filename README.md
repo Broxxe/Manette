@@ -14,6 +14,7 @@ An independent GPLv3 project built with Python, GTK 4 and libadwaita. See [Compa
 ## Features
 
 - **Applications:** launch, update and remove detected APT, Flatpak, Snap, AppImage and local applications. Install downloaded `.deb` and Flatpak files, or launch AppImages.
+- **Categories:** automatic grouping by purpose (system, games, work, creative, development and more), with collapsible titled sections and counters in both grid and list views. Click a heading to fold or unfold its category; this choice is saved and shared between views. Search, filters, favorites and sorting work within these sections. Classification uses desktop metadata; each app appears once, and category filters also match its secondary categories. Missing metadata falls under Other. Personal choices are available from the **⋯ → Change category…** menu.
 - **Flexible interface:** compact cards or list view, favorites, English/French interface and adjustable background opacity.
 - **Global search:** find applications, commands, settings and associated folders with **Ctrl+K**.
 - **Storage:** graphical folder usage, linked application data, space estimates before installation and a retained-data summary after removal.

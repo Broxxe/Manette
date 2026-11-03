@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import urllib.request
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, cached_property
 from pathlib import Path
 
 from gi.repository import Gio, GLib
@@ -57,6 +57,11 @@ class App:
     @property
     def icon(self) -> Gio.Icon | None:
         return self.info.get_icon() if self.info else None
+
+    @cached_property
+    def category_ids(self):
+        from .categories import detect
+        return detect(self.info)
 
 
 @dataclass
