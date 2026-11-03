@@ -1,5 +1,7 @@
 """Associations entre applications et dossiers, indépendantes de la machine."""
 
+from .i18n import _ as tr
+
 from dataclasses import dataclass
 import json
 import os
@@ -46,7 +48,7 @@ def _load() -> dict:
     raw = json.loads(path.read_text())
     if not isinstance(raw, dict) or any(not isinstance(v, list) or
                                        any(not isinstance(p, str) for p in v) for v in raw.values()):
-        raise ValueError("Le fichier des associations de dossiers est invalide.")
+        raise ValueError(tr('Le fichier des associations de dossiers est invalide.'))
     return raw
 
 

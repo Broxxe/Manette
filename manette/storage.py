@@ -1,5 +1,7 @@
 """Résumé de l'espace du dossier personnel, sans modification des fichiers."""
 
+from .i18n import _ as tr
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -36,11 +38,11 @@ def parse_usage(home: Path, output: bytes, warning='') -> Summary:
         elif path.parent == home:
             folders[path] = Entry(path, int(size))
     if total is None and not folders:
-        raise ValueError(warning or "Impossible de mesurer le dossier personnel.")
+        raise ValueError(warning or tr('Impossible de mesurer le dossier personnel.'))
     measured = sum(entry.size for entry in folders.values())
     if total is None:
         total = measured
-        warning = warning or "Analyse incomplète : seuls les dossiers mesurés sont affichés."
+        warning = warning or tr('Analyse incomplète : seuls les dossiers mesurés sont affichés.')
     entries = list(folders.values())
     # du inclut aussi les fichiers directement dans HOME et les blocs du dossier.
     if total > measured:
@@ -57,28 +59,28 @@ def analyze(home: Path | None = None) -> Summary:
                                 env={**os.environ, 'LC_ALL': 'C.UTF-8'})
         warning = ''
         if result.returncode:
-            warning = "Analyse partielle : certains dossiers n'ont pas pu être lus."
+            warning = tr("Analyse partielle : certains dossiers n'ont pas pu être lus.")
         return parse_usage(home, result.stdout, warning)
     except subprocess.TimeoutExpired as error:
         return parse_usage(home, error.stdout or b'',
-                           "Analyse arrêtée après une minute : les tailles affichées sont partielles. Réessaie si nécessaire.")
+                           tr('Analyse arrêtée après une minute : les tailles affichées sont partielles. Réessayez si nécessaire.'))
     except OSError as error:
-        raise ValueError(f"Impossible de lancer l'analyse : {error}") from error
+        raise ValueError(tr("Impossible de lancer l'analyse : {value0}", value0=error)) from error
 
 
 DESCRIPTIONS = {
-    '.local': 'Applications et données utilisateur',
-    '.cache': 'Caches des applications',
-    '.config': 'Réglages et données des applications',
-    '.var': 'Données utilisateur, notamment Flatpak',
-    '.lmstudio': 'Modèles et données LM Studio',
-    '.unsloth': 'Environnement et données Unsloth',
-    '.codex': 'Données Codex',
-    'snap': 'Données des applications Snap',
+    '.local': tr('Applications et données utilisateur'),
+    '.cache': tr('Caches des applications'),
+    '.config': tr('Réglages et données des applications'),
+    '.var': tr('Données utilisateur, notamment Flatpak'),
+    '.lmstudio': tr('Modèles et données LM Studio'),
+    '.unsloth': tr('Environnement et données Unsloth'),
+    '.codex': tr('Données Codex'),
+    'snap': tr('Données des applications Snap'),
 }
 
 
 def entry_title(entry: Entry) -> str:
     if entry.direct_files:
-        return 'Fichiers directement dans le dossier personnel'
+        return tr('Fichiers directement dans le dossier personnel')
     return DESCRIPTIONS.get(entry.path.name, entry.path.name)

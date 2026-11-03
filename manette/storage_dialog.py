@@ -1,5 +1,7 @@
 """Vue graphique des plus gros dossiers personnels."""
 
+from .i18n import _ as tr, number
+
 import threading
 
 from gi.repository import Adw, Gio, GLib, Gtk, Pango
@@ -10,33 +12,32 @@ from .widgets import StatCard, icon_tile, page_box, page_scroller, stat_grid
 
 class StorageDialog(Adw.Dialog):
     def __init__(self, window):
-        super().__init__(title='Ce qui prend de la place chez toi', content_width=840, content_height=740)
+        super().__init__(title=tr('Occupation du dossier personnel'), content_width=840, content_height=740)
         self.window = window
         self.generation = 0
         self.busy = False
         self.connect('closed', lambda *_: self._closed())
         header = Adw.HeaderBar()
-        self.refresh_button = Gtk.Button(icon_name='view-refresh-symbolic', tooltip_text='Recalculer les tailles')
+        self.refresh_button = Gtk.Button(icon_name='view-refresh-symbolic', tooltip_text=tr('Recalculer les tailles'))
         self.refresh_button.connect('clicked', lambda *_: self.refresh())
         header.pack_start(self.refresh_button)
         self.stack = Gtk.Stack(vexpand=True)
-        self.stack.add_named(Adw.StatusPage(title='Analyse de ton dossier personnel…',
-            description='Les dossiers cachés sont inclus. Cela peut prendre un moment.',
+        self.stack.add_named(Adw.StatusPage(title=tr('Analyse du dossier personnel…'),
+            description=tr('Les dossiers cachés sont inclus. Cela peut prendre un moment.'),
             child=Adw.Spinner(width_request=40, height_request=40)), 'loading')
-        self.error_page = Adw.StatusPage(title='Analyse impossible', icon_name='dialog-warning-symbolic',
-                                         description='Réessaie avec le bouton Actualiser.')
+        self.error_page = Adw.StatusPage(title=tr('Analyse impossible'), icon_name='dialog-warning-symbolic',
+                                         description=tr('Réessayez avec le bouton Actualiser.'))
         self.stack.add_named(self.error_page, 'error')
 
         content = page_box()
-        self.total_card = StatCard('Espace mesuré', 'drive-harddisk-symbolic')
-        self.count_card = StatCard('Dossiers', 'folder-symbolic')
-        self.largest_card = StatCard('Le plus gros dossier', 'view-sort-descending-symbolic')
+        self.total_card = StatCard(tr('Espace mesuré'), 'drive-harddisk-symbolic')
+        self.count_card = StatCard(tr('Dossiers'), 'folder-symbolic')
+        self.largest_card = StatCard(tr('Le plus gros dossier'), 'view-sort-descending-symbolic')
         content.append(stat_grid(self.total_card, self.count_card, self.largest_card))
         self.warning = Gtk.Label(xalign=0, wrap=True, selectable=True, visible=False, css_classes=['warning'])
         content.append(self.warning)
-        group = Adw.PreferencesGroup(title='Du plus gros au plus petit',
-            description='Chaque barre indique la part du dossier dans le total mesuré. '
-                        'Les autres disques montés et les cibles des liens symboliques ne sont pas parcourus.')
+        group = Adw.PreferencesGroup(title=tr('Du plus gros au plus petit'),
+            description=tr('Chaque barre indique la part du dossier dans le total mesuré. Les autres disques montés et les cibles des liens symboliques ne sont pas parcourus.'))
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=['boxed-list'])
         group.add(self.list)
         content.append(group)
@@ -78,10 +79,10 @@ class StorageDialog(Adw.Dialog):
             return
         folders = [entry for entry in summary.entries if not entry.direct_files]
         self.total_card.set(GLib.format_size(summary.total), str(summary.home))
-        self.count_card.set(str(len(folders)), 'dossiers cachés inclus')
+        self.count_card.set(str(len(folders)), tr('dossiers cachés inclus'))
         largest = max(folders, key=lambda entry: entry.size, default=None)
         self.largest_card.set(GLib.format_size(largest.size) if largest else '—',
-                              largest.path.name if largest else 'Aucun dossier')
+                              largest.path.name if largest else tr('Aucun dossier'))
         self.warning.set_text(summary.warning)
         self.warning.set_visible(bool(summary.warning))
         self.message.set_text('')
@@ -89,7 +90,7 @@ class StorageDialog(Adw.Dialog):
         for entry in summary.entries:
             self.list.append(self._row(entry, summary.total))
         if not summary.entries:
-            self.message.set_text('Aucun dossier ou fichier à afficher.')
+            self.message.set_text(tr('Aucun dossier ou fichier à afficher.'))
         self.stack.set_visible_child_name('results')
 
     def _row(self, entry, total):
@@ -107,13 +108,13 @@ class StorageDialog(Adw.Dialog):
         head.append(labels)
         head.append(Gtk.Label(label=GLib.format_size(entry.size), valign=Gtk.Align.CENTER,
                               css_classes=['heading', 'numeric']))
-        button = Gtk.Button(child=Adw.ButtonContent(icon_name='folder-open-symbolic', label='Ouvrir'),
-                            tooltip_text=f'Ouvrir {entry.path}', valign=Gtk.Align.CENTER)
+        button = Gtk.Button(child=Adw.ButtonContent(icon_name='folder-open-symbolic', label=tr('Ouvrir')),
+                            tooltip_text=tr('Ouvrir {value0}', value0=entry.path), valign=Gtk.Align.CENTER)
         button.connect('clicked', lambda *_: self._open(entry.path))
         head.append(button)
         body.append(head)
         bar = Gtk.ProgressBar(fraction=fraction, show_text=True,
-                              text=f'{fraction:.1%} du total'.replace('.', ','))
+                              text=number(tr('{value0:.1%} du total', value0=fraction)))
         body.append(bar)
         return Gtk.ListBoxRow(child=body, activatable=False)
 
@@ -121,4 +122,4 @@ class StorageDialog(Adw.Dialog):
         try:
             Gio.AppInfo.launch_default_for_uri(path.absolute().as_uri(), None)
         except GLib.Error as error:
-            self.message.set_text(f'Impossible d’ouvrir le dossier : {error.message}')
+            self.message.set_text(tr('Impossible d’ouvrir le dossier : {value0}', value0=error.message))

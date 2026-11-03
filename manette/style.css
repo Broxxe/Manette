@@ -92,3 +92,38 @@ button.tile {
 }
 .console-view { font-size: 0.92em; }
 .command-editor, .command-editor text { background: transparent; }
+
+/* Cartes d'applications et actions communes aux deux présentations. */
+.app-grid > flowboxchild {
+  padding: 0;
+  border-radius: 18px;
+}
+.app-card {
+  padding: 14px;
+  border-radius: 18px;
+  min-height: 170px;
+  border: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+}
+.app-card-title { font-size: 1.1em; }
+button.app-play {
+  min-width: 56px;
+  min-height: 56px;
+  padding: 0;
+}
+.app-options > button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+.app-row { min-height: 80px; }
+
+/* Seul le fond devient translucide ; textes et contrôles restent opaques. */
+window.manette-window.translucent {
+  background-color: color-mix(in srgb, var(--window-bg-color) var(--manette-background-opacity, 78%), transparent);
+}
+window.manette-window.translucent .manette-content {
+  background-color: transparent;
+}
+window.manette-window.translucent headerbar {
+  background-color: color-mix(in srgb, var(--headerbar-bg-color) var(--manette-background-opacity, 78%), transparent);
+}

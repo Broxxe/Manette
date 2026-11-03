@@ -1,5 +1,7 @@
 """Page Moniteur : processeur, mémoire, carte graphique et applications en direct."""
 
+from .i18n import _ as tr, number
+
 import subprocess
 import threading
 from collections import deque
@@ -70,14 +72,14 @@ class MonitorPage(Gtk.Box):
         self.app_rows: dict[str, AppUsageRow] = {}
 
         content = page_box()
-        self.card_cpu = LiveCard("Processeur", "computer-chip-symbolic")
-        self.card_mem = LiveCard("Mémoire", "media-flash-symbolic")
-        self.card_gpu = LiveCard("Carte graphique", "video-display-symbolic")
-        self.card_vram = LiveCard("Mémoire vidéo", "drive-harddisk-solidstate-symbolic")
+        self.card_cpu = LiveCard(tr('Processeur'), "computer-chip-symbolic")
+        self.card_mem = LiveCard(tr('Mémoire'), "media-flash-symbolic")
+        self.card_gpu = LiveCard(tr('Carte graphique'), "video-display-symbolic")
+        self.card_vram = LiveCard(tr('Mémoire vidéo'), "drive-harddisk-solidstate-symbolic")
         self.cards = stat_grid(self.card_cpu, self.card_mem, self.card_gpu, self.card_vram)
         content.append(self.cards)
 
-        self.cpu_group = Adw.PreferencesGroup(title="Processeur", description=monitor.cpu_model())
+        self.cpu_group = Adw.PreferencesGroup(title=tr('Processeur'), description=monitor.cpu_model())
         self.cores = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, min_children_per_line=8,
                                  max_children_per_line=16, column_spacing=6, row_spacing=12)
         self.core_bars = []
@@ -91,12 +93,12 @@ class MonitorPage(Gtk.Box):
         self.cpu_group.add(cores_card)
         content.append(self.cpu_group)
 
-        self.gpu_group = Adw.PreferencesGroup(title="Carte graphique")
+        self.gpu_group = Adw.PreferencesGroup(title=tr('Carte graphique'))
         self.gpu_rows = {}
-        for key, title, icon in (("temp", "Température", "weather-clear-symbolic"),
-                                 ("power", "Consommation", "battery-full-charging-symbolic"),
-                                 ("fan", "Ventilateur", "weather-windy-symbolic"),
-                                 ("clock", "Fréquence", "speedometer-symbolic")):
+        for key, title, icon in (("temp", tr('Température'), "weather-clear-symbolic"),
+                                 ("power", tr('Consommation'), "battery-full-charging-symbolic"),
+                                 ("fan", tr('Ventilateur'), "weather-windy-symbolic"),
+                                 ("clock", tr('Fréquence'), "speedometer-symbolic")):
             row = Adw.ActionRow(title=title)
             row.add_prefix(Gtk.Image(icon_name=icon, css_classes=["dim-label"]))
             label = Gtk.Label(css_classes=["numeric"])
@@ -105,11 +107,11 @@ class MonitorPage(Gtk.Box):
             self.gpu_rows[key] = label
         content.append(self.gpu_group)
 
-        apps_group = Adw.PreferencesGroup(title="Applications",
-                                          description="Mémoire et processeur utilisés par chaque application")
+        apps_group = Adw.PreferencesGroup(title=tr('Applications'),
+                                          description=tr('Mémoire et processeur utilisés par chaque application'))
         self.app_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
         self.app_list.set_sort_func(lambda a, b: b.usage.memory - a.usage.memory)
-        self.app_list.set_placeholder(Gtk.Label(label="Mesure en cours…", margin_top=18, margin_bottom=18,
+        self.app_list.set_placeholder(Gtk.Label(label=tr('Mesure en cours…'), margin_top=18, margin_bottom=18,
                                                 css_classes=["dim-label"]))
         apps_group.add(self.app_list)
         content.append(apps_group)
@@ -148,14 +150,13 @@ class MonitorPage(Gtk.Box):
         self.working = False
         total, cores = data["cpu"]
         details = [f"{data['temp']:.0f} °C" if data["temp"] is not None else "",
-                   f"{data['freq']:.2f} GHz".replace(".", ",") if data["freq"] else ""]
-        self.card_cpu.set(f"{total:.0%}".replace("%", " %"), " · ".join(d for d in details if d))
+                   number(f"{data['freq']:.2f} GHz") if data["freq"] else ""]
+        self.card_cpu.set(number(f"{total:.0%}"), " · ".join(d for d in details if d))
         self.card_cpu.spark.push(total)
         self._update_cores(cores)
 
         mem = data["mem"]
-        self.card_mem.set(GLib.format_size(mem.used), f"sur {GLib.format_size(mem.total)} · "
-                          f"{GLib.format_size(mem.available)} disponibles")
+        self.card_mem.set(GLib.format_size(mem.used), tr('sur {value0} · {value1} disponibles', value0=GLib.format_size(mem.total), value1=GLib.format_size(mem.available)))
         self.card_mem.spark.push(mem.used / mem.total if mem.total else 0)
 
         gpu = data["gpus"][0] if data["gpus"] else None
@@ -184,26 +185,26 @@ class MonitorPage(Gtk.Box):
                 self.core_bars.append(bar)
         for bar, value in zip(self.core_bars, cores):
             bar.set_value(value)
-            bar.set_tooltip_text(f"{value:.0%}".replace("%", " %"))
+            bar.set_tooltip_text(number(f"{value:.0%}"))
 
     def _update_gpu(self, gpu: monitor.Gpu):
         self.gpu_group.set_description(gpu.name)
         usage = gpu.usage or 0
         temp = f"{gpu.temperature:.0f} °C" if gpu.temperature is not None else ""
         power = f"{gpu.power:.0f} W" if gpu.power is not None else ""
-        self.card_gpu.set(f"{usage:.0%}".replace("%", " %"), " · ".join(d for d in (temp, power) if d))
+        self.card_gpu.set(number(f"{usage:.0%}"), " · ".join(d for d in (temp, power) if d))
         self.card_gpu.spark.push(usage)
         if gpu.mem_used is not None and gpu.mem_total:
-            self.card_vram.set(GLib.format_size(gpu.mem_used), f"sur {GLib.format_size(gpu.mem_total)}")
+            self.card_vram.set(GLib.format_size(gpu.mem_used), tr('sur {value0}', value0=GLib.format_size(gpu.mem_total)))
             self.card_vram.spark.push(gpu.mem_used / gpu.mem_total)
 
         self.gpu_rows["temp"].set_label(temp or "—")
         if gpu.power is not None and gpu.power_limit:
-            self.gpu_rows["power"].set_label(f"{gpu.power:.0f} W sur {gpu.power_limit:.0f} W max")
+            self.gpu_rows["power"].set_label(tr('{value0:.0f} W sur {value1:.0f} W max', value0=gpu.power, value1=gpu.power_limit))
         else:
             self.gpu_rows["power"].set_label(power or "—")
         if gpu.fan is not None:
-            self.gpu_rows["fan"].set_label("à l'arrêt" if gpu.fan == 0 else f"{gpu.fan:.0%}".replace("%", " %"))
+            self.gpu_rows["fan"].set_label(tr("à l'arrêt") if gpu.fan == 0 else number(f"{gpu.fan:.0%}"))
         else:
             self.gpu_rows["fan"].set_label("—")
         self.gpu_rows["clock"].set_label(f"{gpu.clock} MHz" if gpu.clock else "—")
@@ -229,23 +230,23 @@ class MonitorPage(Gtk.Box):
             return
         def go():
             threading.Thread(target=self._close_app, args=(usage,), daemon=True).start()
-        self.window.confirm(f"Fermer {usage.name} ?",
-                            f"Ses {usage.processes} processus seront arrêtés. Ce qui n'est pas enregistré sera perdu.",
-                            "Fermer", go)
+        self.window.confirm(tr('Fermer {value0} ?', value0=usage.name),
+                            tr("Ses {value0} processus seront arrêtés. Ce qui n'est pas enregistré sera perdu.", value0=usage.processes),
+                            tr('Fermer'), go)
 
     def _close_app(self, usage):
         try:
             result = subprocess.run(["systemctl", "--user", "stop", *usage.units],
                                     capture_output=True, text=True, timeout=30)
             if result.returncode:
-                detail = result.stderr.strip() or f"code {result.returncode}"
-                message = f"Impossible de fermer {usage.name} : {detail}"
+                detail = result.stderr.strip() or tr('code {value0}', value0=result.returncode)
+                message = tr('Impossible de fermer {value0} : {value1}', value0=usage.name, value1=detail)
             else:
-                message = f"{usage.name} est fermée"
+                message = tr('{value0} est fermée', value0=usage.name)
         except subprocess.TimeoutExpired:
-            message = f"Fermeture de {usage.name} non confirmée : délai dépassé."
+            message = tr('Fermeture de {value0} non confirmée : délai dépassé.', value0=usage.name)
         except OSError as error:
-            message = f"Impossible de fermer {usage.name} : {error}"
+            message = tr('Impossible de fermer {value0} : {value1}', value0=usage.name, value1=error)
         GLib.idle_add(self.window.toast, message)
 
 
@@ -256,11 +257,11 @@ class AppUsageRow(Adw.ActionRow):
         if usage.icon:
             icon.set_from_gicon(usage.icon)
         self.add_prefix(icon)
-        self.cpu = Gtk.Label(width_chars=6, xalign=1, css_classes=["numeric", "dim-label"], tooltip_text="Processeur")
-        self.mem = Gtk.Label(width_chars=9, xalign=1, css_classes=["numeric", "heading"], tooltip_text="Mémoire")
+        self.cpu = Gtk.Label(width_chars=6, xalign=1, css_classes=["numeric", "dim-label"], tooltip_text=tr('Processeur'))
+        self.mem = Gtk.Label(width_chars=9, xalign=1, css_classes=["numeric", "heading"], tooltip_text=tr('Mémoire'))
         self.add_suffix(self.cpu)
         self.add_suffix(self.mem)
-        close = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Fermer l'application",
+        close = Gtk.Button(icon_name="window-close-symbolic", tooltip_text=tr("Fermer l'application"),
                            valign=Gtk.Align.CENTER, css_classes=["flat", "circular", "remove-button"],
                            sensitive=bool(usage.units), opacity=1 if usage.units else 0)
         close.connect("clicked", lambda *_: page.close_app(self.usage))
@@ -270,6 +271,6 @@ class AppUsageRow(Adw.ActionRow):
     def update(self, usage: monitor.AppUsage):
         self.usage = usage
         self.set_title(GLib.markup_escape_text(usage.name))
-        self.set_subtitle(plural(usage.processes, "processus", "processus"))
-        self.cpu.set_label(f"{usage.cpu:.0%}".replace("%", " %") if usage.cpu >= 0.005 else "—")
+        self.set_subtitle(plural(usage.processes, tr('processus', context='singular'), tr('processus')))
+        self.cpu.set_label(number(f"{usage.cpu:.0%}") if usage.cpu >= 0.005 else "—")
         self.mem.set_label(GLib.format_size(usage.memory))

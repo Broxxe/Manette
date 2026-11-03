@@ -1,6 +1,9 @@
 """Fenêtre principale de Manette."""
 
+from .i18n import _ as tr
+
 import sys
+import os
 from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
@@ -10,7 +13,8 @@ from .console import Console
 from .custom_page import CustomPage
 from .monitor_page import MonitorPage
 from .system_page import SystemPage
-from . import system
+from . import preferences, system
+from .settings_dialog import SettingsDialog, automatic_check, periodic_check
 
 APP_ID = "local.Manette"
 HERE = Path(__file__).parent
@@ -27,25 +31,30 @@ class Window(Adw.ApplicationWindow):
         self.system_page = SystemPage(self)
         self.monitor_page = MonitorPage(self)
         self.custom_page = CustomPage(self)
-        self.stack.add_titled_with_icon(self.apps_page, "apps", "Applications", "view-app-grid-symbolic")
-        self.stack.add_titled_with_icon(self.system_page, "system", "Système", "computer-symbolic")
-        self.stack.add_titled_with_icon(self.monitor_page, "monitor", "Moniteur", "utilities-system-monitor-symbolic")
-        self.stack.add_titled_with_icon(self.custom_page, "custom", "Mes commandes", "utilities-terminal-symbolic")
+        self.stack.add_titled_with_icon(self.apps_page, "apps", tr('Applications'), "view-app-grid-symbolic")
+        self.stack.add_titled_with_icon(self.system_page, "system", tr('Système'), "computer-symbolic")
+        self.stack.add_titled_with_icon(self.monitor_page, "monitor", tr('Moniteur'), "utilities-system-monitor-symbolic")
+        self.stack.add_titled_with_icon(self.custom_page, "custom", tr('Mes commandes'), "utilities-terminal-symbolic")
         self.stack.connect("notify::visible-child-name", lambda *_: self._on_page_changed())
 
         header = Adw.HeaderBar(title_widget=Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
-        self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Tout réanalyser (Ctrl+R)",
+        self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text=tr('Tout réanalyser (Ctrl+R)'),
                                          action_name="win.refresh")
         header.pack_start(self.refresh_button)
         menu = Gio.Menu()
-        menu.append("Ouvrir le fichier des commandes", "win.open-config")
-        menu.append("À propos de Manette", "app.about")
+        menu.append(tr('Préférences et mises à jour'), "win.settings")
+        menu.append(tr('Ouvrir le fichier des commandes'), "win.open-config")
+        menu.append(tr('À propos de Manette'), "app.about")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True,
-                                       tooltip_text="Menu"))
-        console_toggle = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text="Console (Ctrl+J)")
+                                       tooltip_text=tr('Menu')))
+        header.pack_end(Gtk.Button(icon_name='emblem-system-symbolic', action_name='win.settings',
+                                    tooltip_text=tr('Réglages de Manette'), css_classes=['flat', 'circular']))
+        console_toggle = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text=tr('Console (Ctrl+J)'))
         header.pack_end(console_toggle)
 
         main = Adw.ToolbarView(content=self.stack, top_bar_style=Adw.ToolbarStyle.RAISED_BORDER)
+        main.add_css_class('manette-content')
+        self.console.toolbar.add_css_class('manette-content')
         main.add_top_bar(header)
         self.split = Adw.OverlaySplitView(content=main, sidebar=self.console, sidebar_position=Gtk.PackType.END,
                                           show_sidebar=False, min_sidebar_width=380, max_sidebar_width=600,
@@ -54,24 +63,47 @@ class Window(Adw.ApplicationWindow):
                                  GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE)
         self.toasts = Adw.ToastOverlay(child=self.split)
         self.set_content(self.toasts)
+        self.add_css_class('manette-window')
+        self._appearance_css = Gtk.CssProvider()
+        self.get_style_context().add_provider(self._appearance_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        self.apply_appearance()
+        Adw.StyleManager.get_default().connect('notify::high-contrast', lambda *_: self.apply_appearance())
 
         breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 900sp"))
         breakpoint.add_setter(self.split, "collapsed", True)
         self.add_breakpoint(breakpoint)
 
         for name, callback in (("refresh", self.refresh), ("open-config", self._open_config),
+                               ("settings", lambda: SettingsDialog(self).present(self)),
                                ("toggle-console", lambda: self.split.set_show_sidebar(not self.split.get_show_sidebar()))):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_, cb=callback: cb())
             self.add_action(action)
 
         self.refresh()
+        GLib.timeout_add_seconds(5, automatic_check, self)
+        GLib.timeout_add_seconds(86400, periodic_check, self)
 
     def _on_page_changed(self):
         if self.stack.get_visible_child_name() == "monitor":
             self.monitor_page.start()
         else:
             self.monitor_page.stop()
+
+    def apply_appearance(self, opacity=None):
+        try:
+            settings = preferences.load()
+            enabled = bool(settings.get('translucent', True))
+        except (OSError, ValueError):
+            settings, enabled = {}, False
+        amount = preferences.background_opacity(settings if opacity is None else {'background_opacity': opacity})
+        self._appearance_css.load_from_string(
+            f"window.manette-window {{ --manette-background-opacity: {amount}%; }}")
+        enabled = enabled and not Adw.StyleManager.get_default().get_high_contrast()
+        if enabled:
+            self.add_css_class('translucent')
+        else:
+            self.remove_css_class('translucent')
 
     def refresh(self):
         self.apps_page.scan()
@@ -84,17 +116,14 @@ class Window(Adw.ApplicationWindow):
     def run(self, argv, title, display=None, on_done=None, space_paths=None):
         if self.console.busy:
             self.split.set_show_sidebar(True)
-            self.confirm("Une opération est déjà en cours", f"« {self.console.title} » continue. "
-                         f"« {title} » n'a pas été lancé. Attends la fin de l'opération.",
-                         "Compris", lambda: None, destructive=False)
+            self.confirm(tr('Une opération est déjà en cours'), tr("« {value0} » continue. « {value1} » n'a pas été lancé. Attendez la fin de l'opération.", value0=self.console.title, value1=title),
+                         tr('Compris'), lambda: None, destructive=False)
             return
         if space_paths is not None:
             warnings = system.space_warnings(space_paths)
             if warnings:
-                body = "\n".join(warnings) + ("\n\nLibère de la place dans Système → Nettoyage avant de continuer. "
-                        "Ce seuil de précaution ne garantit pas l'espace nécessaire au téléchargement "
-                        "et à l'installation.")
-                self.confirm("Espace disque faible ou inconnu", body, "Continuer quand même",
+                body = "\n".join(warnings) + (tr("\n\nLibérez de la place dans Système → Nettoyage avant de continuer. Ce seuil de précaution ne garantit pas l'espace nécessaire au téléchargement et à l'installation."))
+                self.confirm(tr('Espace disque faible ou inconnu'), body, tr('Continuer quand même'),
                              lambda: self.run(argv, title, display, on_done), destructive=False)
                 return
         self.split.set_show_sidebar(True)
@@ -105,7 +134,7 @@ class Window(Adw.ApplicationWindow):
 
     def confirm(self, heading, body, label, callback, destructive=True):
         dialog = Adw.AlertDialog(heading=heading, body=body, default_response="cancel", close_response="cancel")
-        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("cancel", tr('Annuler'))
         dialog.add_response("ok", label)
         dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE if destructive
                                        else Adw.ResponseAppearance.SUGGESTED)
@@ -113,10 +142,10 @@ class Window(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _on_finished(self, title, ok):
-        self.toast(f"{'✔' if ok else '✘'} {title} : {'terminé' if ok else 'échec'}")
+        self.toast(f"{'✔' if ok else '✘'} {title} : {tr('terminé') if ok else tr('échec')}")
         if not self.is_active():
-            notification = Gio.Notification.new(f"{title} : {'terminé' if ok else 'échec'}")
-            notification.set_body("Le détail est dans la console de Manette.")
+            notification = Gio.Notification.new(f"{title} : {tr('terminé') if ok else tr('échec')}")
+            notification.set_body(tr('Le détail est dans la console de Manette.'))
             self.get_application().send_notification("command-finished", notification)
 
     def _open_config(self):
@@ -152,9 +181,11 @@ class ManetteApp(Adw.Application):
 
     def _about(self):
         Adw.AboutDialog(application_name="Manette", application_icon=APP_ID, version="0.1",
-                        comments="Tes applications, ton système et tes commandes, en boutons.").present(
+                        comments=tr('Applications, système et commandes accessibles en quelques clics.')).present(
             self.props.active_window)
 
 
 def main() -> int:
+    from .i18n import language
+    os.environ['LANGUAGE'] = language()
     return ManetteApp().run(sys.argv)

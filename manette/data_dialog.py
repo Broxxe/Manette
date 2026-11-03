@@ -1,5 +1,7 @@
 """Dossiers associés à une application : consulter et lier, sans suppression."""
 
+from .i18n import _ as tr
+
 from pathlib import Path
 import threading
 
@@ -10,23 +12,21 @@ from . import app_data
 
 class DataDialog(Adw.Dialog):
     def __init__(self, app, window):
-        super().__init__(title=f'Données de {app.name}', content_width=680, content_height=600)
+        super().__init__(title=tr('Données de {value0}', value0=app.name), content_width=680, content_height=600)
         self.app, self.window = app, window
         self.generation = 0
         self.connect('closed', lambda *_: self._closed())
         header = Adw.HeaderBar()
-        self.add_button = Gtk.Button(label='Associer un dossier…', css_classes=['suggested-action'])
+        self.add_button = Gtk.Button(label=tr('Associer un dossier…'), css_classes=['suggested-action'])
         self.add_button.connect('clicked', lambda *_: self._select_folder())
         header.pack_end(self.add_button)
         page = Adw.PreferencesPage()
-        self.summary = Adw.PreferencesGroup(title='Espace associé', description='Mesure en cours…')
+        self.summary = Adw.PreferencesGroup(title=tr('Espace associé'), description=tr('Mesure en cours…'))
         page.add(self.summary)
-        app_size = GLib.format_size(app.size) if app.size is not None else 'inconnue'
-        self.summary.add(Adw.ActionRow(title="Taille de l'application", subtitle=app_size))
-        self.folders = Adw.PreferencesGroup(title='Dossiers associés',
-            description="Détection des emplacements standards et dossiers ajoutés par toi. "
-                        "Certains dossiers peuvent être partagés entre applications. "
-                        "Retirer une association conserve tous les fichiers.")
+        app_size = GLib.format_size(app.size) if app.size is not None else tr('inconnue')
+        self.summary.add(Adw.ActionRow(title=tr("Taille de l'application"), subtitle=app_size))
+        self.folders = Adw.PreferencesGroup(title=tr('Dossiers associés'),
+            description=tr('Détection des emplacements standards et dossiers ajoutés manuellement. Certains dossiers peuvent être partagés entre applications. Retirer une association conserve tous les fichiers.'))
         page.add(self.folders)
         self.rows = []
         self.message = Gtk.Label(xalign=0, wrap=True, selectable=True)
@@ -43,7 +43,7 @@ class DataDialog(Adw.Dialog):
 
     def refresh(self):
         self.generation += 1
-        self.summary.set_description('Mesure en cours…')
+        self.summary.set_description(tr('Mesure en cours…'))
         self.add_button.set_sensitive(False)
         threading.Thread(target=self._measure, args=(self.generation,), daemon=True).start()
 
@@ -62,26 +62,26 @@ class DataDialog(Adw.Dialog):
         for row in self.rows:
             self.folders.remove(row)
         self.rows.clear()
-        self.summary.set_description(f'Données associées sur disque : {GLib.format_size(total)}' +
-                                    (' · mesure partielle' if not complete else '') if not error else 'Mesure impossible')
+        self.summary.set_description(tr('Données associées sur disque : {value0}', value0=GLib.format_size(total)) +
+                                    (' · mesure partielle' if not complete else '') if not error else tr('Mesure impossible'))
         self.message.set_text(error or ('' if usages else
-            "Aucun dossier identifié automatiquement. Tu peux en associer un avec le bouton en haut."))
+            tr('Aucun dossier identifié automatiquement. Vous pouvez en associer un avec le bouton en haut.')))
         for usage in usages:
             folder = usage.folder
-            size = GLib.format_size(usage.size) if usage.size is not None else 'indisponible'
-            detail = f'{size} · ' + ('détecté automatiquement' if folder.automatic else 'association personnelle')
+            size = GLib.format_size(usage.size) if usage.size is not None else tr('indisponible')
+            detail = f'{size} · ' + (tr('détecté automatiquement') if folder.automatic else tr('association personnelle'))
             if usage.included_in is not None:
-                detail = f'Déjà inclus dans {usage.included_in}'
+                detail = tr('Déjà inclus dans {value0}', value0=usage.included_in)
             if not usage.complete:
                 detail += ' · dossier absent, illisible ou mesure incomplète'
             row = Adw.ActionRow(title=GLib.markup_escape_text(str(folder.path)),
                                 subtitle=GLib.markup_escape_text(detail), title_lines=2)
-            open_button = Gtk.Button(icon_name='folder-open-symbolic', tooltip_text='Ouvrir le dossier',
+            open_button = Gtk.Button(icon_name='folder-open-symbolic', tooltip_text=tr('Ouvrir le dossier'),
                                      valign=Gtk.Align.CENTER, sensitive=folder.path.is_dir())
             open_button.connect('clicked', lambda *_, p=folder.path: self._open(p))
             row.add_suffix(open_button)
             if not folder.automatic:
-                remove = Gtk.Button(icon_name='list-remove-symbolic', tooltip_text="Retirer l'association (garde les fichiers)",
+                remove = Gtk.Button(icon_name='list-remove-symbolic', tooltip_text=tr("Retirer l'association (garde les fichiers)"),
                                     valign=Gtk.Align.CENTER)
                 remove.connect('clicked', lambda *_, p=folder.path: self._unlink(p))
                 row.add_suffix(remove)
@@ -92,10 +92,10 @@ class DataDialog(Adw.Dialog):
         try:
             Gio.AppInfo.launch_default_for_uri(path.absolute().as_uri(), None)
         except GLib.Error as error:
-            self.message.set_text(f'Impossible d’ouvrir le dossier : {error.message}')
+            self.message.set_text(tr('Impossible d’ouvrir le dossier : {value0}', value0=error.message))
 
     def _select_folder(self):
-        dialog = Gtk.FileDialog(title=f'Associer un dossier à {self.app.name}')
+        dialog = Gtk.FileDialog(title=tr('Associer un dossier à {value0}', value0=self.app.name))
         dialog.set_initial_folder(Gio.File.new_for_path(str(Path.home())))
         dialog.select_folder(self.window, None, self._selected)
 
@@ -108,12 +108,12 @@ class DataDialog(Adw.Dialog):
             return
         path = file.get_path()
         if path is None:
-            self.message.set_text('Choisis un dossier sur cet ordinateur.')
+            self.message.set_text(tr('Choisissez un dossier sur cet ordinateur.'))
             return
         try:
             app_data.associate(self.app, Path(path))
         except (OSError, ValueError) as error:
-            self.message.set_text(f'Association impossible : {error}')
+            self.message.set_text(tr('Association impossible : {value0}', value0=error))
             return
         self.refresh()
 
@@ -121,6 +121,6 @@ class DataDialog(Adw.Dialog):
         try:
             app_data.associate(self.app, path, remove=True)
         except (OSError, ValueError) as error:
-            self.message.set_text(f'Impossible de retirer cette association : {error}')
+            self.message.set_text(tr('Impossible de retirer cette association : {value0}', value0=error))
             return
         self.refresh()

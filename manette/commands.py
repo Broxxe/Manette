@@ -1,6 +1,8 @@
-"""Tes commandes perso, rangées dans ~/.config/manette/commandes.json."""
+"""Commandes personnelles, enregistrées dans ~/.config/manette/commandes.json."""
 
 from __future__ import annotations
+
+from .i18n import _ as tr
 
 import json
 import shutil
@@ -34,12 +36,12 @@ class Custom:
 
 def _defaults() -> list[Custom]:
     return [
-        Custom("Redémarrer le son", "systemctl --user restart pipewire pipewire-pulse wireplumber && echo 'Son relancé.'",
-               "Quand le son ne marche plus", "audio-speakers-symbolic"),
-        Custom("Espace disque", "df -h -x tmpfs -x squashfs -x efivarfs -x devtmpfs",
-               "Résumé de tous les disques montés", "drive-harddisk-symbolic"),
-        Custom("Mon adresse IP", "ip -br address", "Adresses de toutes les interfaces", "network-wired-symbolic"),
-        Custom("Moniteur htop", "htop", "Processus en temps réel, dans un vrai terminal",
+        Custom(tr('Redémarrer le son'), "systemctl --user restart pipewire pipewire-pulse wireplumber && echo 'Son relancé.'",
+               tr('Quand le son ne marche plus'), "audio-speakers-symbolic"),
+        Custom(tr('Espace disque'), "df -h -x tmpfs -x squashfs -x efivarfs -x devtmpfs",
+               tr('Résumé de tous les disques montés'), "drive-harddisk-symbolic"),
+        Custom(tr('Mon adresse IP'), "ip -br address", tr('Adresses de toutes les interfaces'), "network-wired-symbolic"),
+        Custom(tr('Moniteur htop'), "htop", tr('Processus en temps réel, dans un vrai terminal'),
                "utilities-system-monitor-symbolic", terminal=True),
     ]
 
@@ -73,7 +75,8 @@ def argv(item: Custom) -> list[str]:
 
 def terminal_argv(item: Custom) -> list[str] | None:
     inner = ["sudo", "bash", "-c", item.command] if item.root else ["bash", "-c", item.command]
-    hold = 'echo; read -rsn1 -p "Terminé. Appuie sur une touche pour fermer…"'
+    import shlex
+    hold = 'echo; read -rsn1 -p ' + shlex.quote(tr('Terminé. Appuyez sur une touche pour fermer…'))
     wrapped = ["bash", "-c", f'"$@"; {hold}', "manette", *inner]
     if shutil.which("ptyxis"):
         return ["ptyxis", "--new-window", "--", *wrapped]

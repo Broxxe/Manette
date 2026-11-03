@@ -130,3 +130,14 @@ class LocalApplicationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# Les tests historiques vérifient les messages de référence français.
+def setUpModule():
+    global _locale_patch
+    _locale_patch = patch("manette.i18n.language", return_value="fr")
+    _locale_patch.start()
+
+
+def tearDownModule():
+    _locale_patch.stop()

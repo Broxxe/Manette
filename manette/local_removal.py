@@ -1,5 +1,7 @@
 """Retrait prudent des applications portables et des lanceurs personnels."""
 
+from .i18n import _ as tr
+
 from dataclasses import dataclass
 import os
 import shutil
@@ -47,7 +49,7 @@ def _program_paths(info):
 def _manual_bundle(info, directory):
     root = Path(directory).absolute()
     protected = {Path('/'), Path.home(), Path.home().parent,
-                 *(Path.home() / name for name in ('Applications', 'AppImages', 'opt', '.local', '.local/bin',
+                 *(Path.home() / name for name in (tr('Applications'), 'AppImages', 'opt', '.local', '.local/bin',
                                                     '.local/opt', '.local/share', '.config', '.cache', '.var', 'snap')),
                  *(Path(p) for p in (GLib.get_user_config_dir(), GLib.get_user_data_dir(), GLib.get_user_cache_dir()))}
     for value in range(int(GLib.UserDirectory.N_DIRECTORIES)):
@@ -55,30 +57,29 @@ def _manual_bundle(info, directory):
         if special:
             protected.add(Path(special))
     if root in protected or root in Path.home().parents or root == root.parent or os.path.ismount(root):
-        raise ValueError("Choisis le dossier propre à cette application, pas un dossier général ou un disque entier.")
+        raise ValueError(tr('Choisissez le dossier propre à cette application, pas un dossier général ou un disque entier.'))
     if not root.is_dir() or root.resolve() != root or root.stat().st_uid != os.getuid():
-        raise ValueError("Choisis un dossier t'appartenant, sans lien symbolique. Aucun droit administrateur ne sera demandé.")
+        raise ValueError(tr('Choisissez un dossier vous appartenant, sans lien symbolique. Aucun droit administrateur ne sera demandé.'))
     targets = _program_paths(info)
     if not any(target.is_relative_to(root) for target in targets):
-        raise ValueError("Ce dossier ne contient aucun fichier de programme indiqué dans le lanceur. "
-                         "Manette ne peut pas le retirer comme dossier d'installation.")
+        raise ValueError(tr("Ce dossier ne contient aucun fichier de programme indiqué dans le lanceur. Manette ne peut pas le retirer comme dossier d'installation."))
     return root
 
 
 def preview(app, directory=None) -> Plan:
     if app.info is None:
-        raise ValueError("Aucun lanceur personnel identifié.")
+        raise ValueError(tr('Aucun lanceur personnel identifié.'))
     launcher = Path(app.info.get_filename() or '')
     launcher_dir = Path(GLib.get_user_data_dir()) / 'applications'
     if launcher.parent != launcher_dir or launcher.suffix != '.desktop' or launcher.is_symlink() or not launcher.is_file():
-        raise ValueError("Ce lanceur n'est pas un fichier personnel que Manette peut retirer.")
+        raise ValueError(tr("Ce lanceur n'est pas un fichier personnel que Manette peut retirer."))
     executable = _executable(app.info)
     bundle = None
     if directory is not None:
         bundle = _manual_bundle(app.info, directory)
     elif executable is not None and executable.is_file() and executable.resolve() == executable:
         root = executable.parent
-        bases = [Path.home() / name for name in ('Applications', 'AppImages', 'opt', '.local/opt')]
+        bases = [Path.home() / name for name in (tr('Applications'), 'AppImages', 'opt', '.local/opt')]
         contained = any(root != base and root.is_relative_to(base) for base in bases)
         appimage = (root / 'AppRun').is_file() and any(root.glob('*.desktop'))
         pyinstaller = root.name == executable.name and (root / '_internal').is_dir()
@@ -91,7 +92,7 @@ def preview(app, directory=None) -> Plan:
                 continue
             if any(target.is_relative_to(bundle) for target in _program_paths(other)):
                 if directory is not None:
-                    raise ValueError("Ce dossier contient aussi le programme d'une autre application. Son retrait est bloqué.")
+                    raise ValueError(tr("Ce dossier contient aussi le programme d'une autre application. Son retrait est bloqué."))
                 bundle = None
                 break
     paths = ([bundle] if bundle else []) + [launcher]
@@ -102,6 +103,6 @@ def execute(app, plan, trash):
     """Revérifie le plan avant toute action ; trash est la corbeille du bureau."""
     current = preview(app, plan.bundle if plan.manual else None)
     if (current.launcher, current.bundle, current.stamps) != (plan.launcher, plan.bundle, plan.stamps):
-        raise ValueError("Les fichiers ont changé depuis la confirmation. Réessaie pour revoir les éléments à retirer.")
+        raise ValueError(tr('Les fichiers ont changé depuis la confirmation. Réessayez pour revoir les éléments à retirer.'))
     for path in ([plan.bundle] if plan.bundle else []) + [plan.launcher]:
         trash(path)

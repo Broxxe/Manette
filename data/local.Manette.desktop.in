@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Manette
-Comment=Applications, système et commandes perso en boutons
+Comment=Applications, system tools and custom commands
+Comment[fr]=Applications, outils système et commandes personnelles
 Exec=@EXEC@
 Icon=local.Manette
 Terminal=false

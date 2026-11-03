@@ -1,4 +1,6 @@
-"""Page Mes commandes : tes propres boutons."""
+"""Page Mes commandes : vos boutons personnels."""
+
+from .i18n import _ as tr
 
 import subprocess
 from dataclasses import replace
@@ -19,11 +21,11 @@ class CustomPage(Gtk.Box):
         content = page_box()
         head = Gtk.Box(spacing=12)
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
-        titles.append(Gtk.Label(label="Mes commandes", xalign=0, css_classes=["title-2"]))
-        titles.append(Gtk.Label(label="Tes boutons perso : un clic pour lancer, ⋯ pour modifier.", xalign=0,
+        titles.append(Gtk.Label(label=tr('Mes commandes'), xalign=0, css_classes=["title-2"]))
+        titles.append(Gtk.Label(label=tr('Commandes personnelles : un clic pour lancer, ⋯ pour modifier.'), xalign=0,
                                 wrap=True, css_classes=["dim-label"]))
         add = Gtk.Button(valign=Gtk.Align.CENTER, css_classes=["suggested-action", "pill"],
-                         child=Adw.ButtonContent(icon_name="list-add-symbolic", label="Nouvelle commande"))
+                         child=Adw.ButtonContent(icon_name="list-add-symbolic", label=tr('Nouvelle commande')))
         add.connect("clicked", lambda *_: self.edit(None))
         head.append(titles)
         head.append(add)
@@ -34,8 +36,8 @@ class CustomPage(Gtk.Box):
                                 row_spacing=12, min_children_per_line=1, max_children_per_line=4,
                                 valign=Gtk.Align.START)
         self.stack.add_named(self.grid, "grid")
-        empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="Aucune commande",
-                               description="Crée ton premier bouton avec « Nouvelle commande ».",
+        empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title=tr('Aucune commande'),
+                               description=tr('Créez votre premier bouton avec « Nouvelle commande ».'),
                                css_classes=["compact"])
         self.stack.add_named(empty, "empty")
         content.append(self.stack)
@@ -56,10 +58,10 @@ class CustomPage(Gtk.Box):
         icon.append(Gtk.Image(icon_name=item.icon, pixel_size=24))
         top.append(icon)
         if item.root:
-            top.append(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Autorisation administrateur requise",
+            top.append(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text=tr('Autorisation administrateur requise'),
                                  valign=Gtk.Align.END, css_classes=["dim-label"]))
         if item.terminal:
-            top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", tooltip_text="S'ouvre dans un terminal",
+            top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", tooltip_text=tr("S'ouvre dans un terminal"),
                                  valign=Gtk.Align.END, css_classes=["dim-label"]))
         body.append(top)
         body.append(Gtk.Label(label=item.name, xalign=0, wrap=True, max_width_chars=24, css_classes=["heading"]))
@@ -75,11 +77,11 @@ class CustomPage(Gtk.Box):
 
         menu = Gtk.MenuButton(icon_name="view-more-horizontal-symbolic", halign=Gtk.Align.END,
                               valign=Gtk.Align.START, margin_top=8, margin_end=8,
-                              css_classes=["flat", "circular"], tooltip_text="Options")
+                              css_classes=["flat", "circular"], tooltip_text=tr('Options'))
         popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         popover = Gtk.Popover(child=popover_box)
-        for label, callback in (("Modifier", lambda: self.edit(item)), ("Dupliquer", lambda: self._duplicate(item)),
-                                ("Supprimer", lambda: self._delete(item))):
+        for label, callback in ((tr('Modifier'), lambda: self.edit(item)), (tr('Dupliquer'), lambda: self._duplicate(item)),
+                                (tr('Supprimer'), lambda: self._delete(item))):
             entry = Gtk.Button(label=label, css_classes=["flat"])
             entry.get_child().set_xalign(0)
             entry.connect("clicked", lambda _b, cb=callback: (popover.popdown(), cb()))
@@ -97,17 +99,17 @@ class CustomPage(Gtk.Box):
             if item.terminal:
                 argv = commands.terminal_argv(item)
                 if not argv:
-                    self.window.toast("Aucun terminal trouvé.")
+                    self.window.toast(tr('Aucun terminal trouvé.'))
                     return
                 subprocess.Popen(argv, start_new_session=True)
-                self.window.toast(f"« {item.name} » s'ouvre dans le terminal")
+                self.window.toast(tr("« {value0} » s'ouvre dans le terminal", value0=item.name))
             else:
                 self.window.run(commands.argv(item), item.name, item.command)
         if item.root or item.confirm:
             body = item.command
             if item.root:
-                body = "Cette commande aura les droits administrateur et pourra modifier tout le système.\n\n" + body
-            self.window.confirm(f"Lancer « {item.name} » ?", body, "Lancer", go, destructive=item.root)
+                body = tr('Cette commande aura les droits administrateur et pourra modifier tout le système.\n\n') + body
+            self.window.confirm(tr('Lancer « {value0} » ?', value0=item.name), body, tr('Lancer'), go, destructive=item.root)
         else:
             go()
 
@@ -123,7 +125,7 @@ class CustomPage(Gtk.Box):
         self._render()
 
     def _duplicate(self, item: Custom):
-        copy = replace(item, name=f"{item.name} (copie)", id=Custom("", "").id)
+        copy = replace(item, name=tr('{value0} (copie)', value0=item.name), id=Custom("", "").id)
         self.items.insert(self.items.index(item) + 1, copy)
         commands.save(self.items)
         self._render()
@@ -133,35 +135,35 @@ class CustomPage(Gtk.Box):
             self.items.remove(item)
             commands.save(self.items)
             self._render()
-            self.window.toast(f"« {item.name} » supprimée")
-        self.window.confirm(f"Supprimer « {item.name} » ?", "Le bouton disparaîtra de Mes commandes.", "Supprimer", go)
+            self.window.toast(tr('« {value0} » supprimée', value0=item.name))
+        self.window.confirm(tr('Supprimer « {value0} » ?', value0=item.name), tr('Le bouton disparaîtra de Mes commandes.'), tr('Supprimer'), go)
 
 
 class CommandDialog(Adw.Dialog):
     def __init__(self, item: Custom | None, on_save):
-        super().__init__(title="Modifier la commande" if item else "Nouvelle commande", content_width=560,
+        super().__init__(title=tr('Modifier la commande') if item else tr('Nouvelle commande'), content_width=560,
                          content_height=720)
         self.item, self.on_save = item, on_save
         self.icon = item.icon if item else commands.ICONS[0]
 
         header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
-        cancel = Gtk.Button(label="Annuler")
+        cancel = Gtk.Button(label=tr('Annuler'))
         cancel.connect("clicked", lambda *_: self.close())
-        self.save_button = Gtk.Button(label="Enregistrer", css_classes=["suggested-action"])
+        self.save_button = Gtk.Button(label=tr('Enregistrer'), css_classes=["suggested-action"])
         self.save_button.connect("clicked", lambda *_: self._save())
         header.pack_start(cancel)
         header.pack_end(self.save_button)
 
         page = Adw.PreferencesPage()
         main = Adw.PreferencesGroup()
-        self.name = Adw.EntryRow(title="Nom du bouton", text=item.name if item else "")
-        self.description = Adw.EntryRow(title="Description (facultatif)", text=item.description if item else "")
+        self.name = Adw.EntryRow(title=tr('Nom du bouton'), text=item.name if item else "")
+        self.description = Adw.EntryRow(title=tr('Description (facultatif)'), text=item.description if item else "")
         main.add(self.name)
         main.add(self.description)
         page.add(main)
 
-        command_group = Adw.PreferencesGroup(title="Commande",
-                                             description="Du bash : plusieurs lignes, &amp;&amp;, pipes… tout marche.")
+        command_group = Adw.PreferencesGroup(title=tr('Commande'),
+                                             description=tr('Du bash : plusieurs lignes, &amp;&amp;, pipes… tout marche.'))
         self.command = Gtk.TextView(monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=12,
                                     bottom_margin=12, left_margin=12, right_margin=12, css_classes=["command-editor"])
         self.command.get_buffer().set_text(item.command if item else "")
@@ -171,14 +173,14 @@ class CommandDialog(Adw.Dialog):
         command_group.add(frame)
         page.add(command_group)
 
-        options = Adw.PreferencesGroup(title="Options")
-        self.root = Adw.SwitchRow(title="Droits administrateur", subtitle="Demande une autorisation au système",
+        options = Adw.PreferencesGroup(title=tr('Options'))
+        self.root = Adw.SwitchRow(title=tr('Droits administrateur'), subtitle=tr('Demande une autorisation au système'),
                                   active=item.root if item else False)
-        self.confirm = Adw.SwitchRow(title="Demander confirmation",
-                                     subtitle="Affiche la commande avant de la lancer, même sans droits administrateur",
+        self.confirm = Adw.SwitchRow(title=tr('Demander confirmation'),
+                                     subtitle=tr('Affiche la commande avant de la lancer, même sans droits administrateur'),
                                      active=item.confirm if item else True)
-        self.terminal = Adw.SwitchRow(title="Ouvrir dans un vrai terminal",
-                                      subtitle="Pour les commandes interactives (htop, ssh, questions…)",
+        self.terminal = Adw.SwitchRow(title=tr('Ouvrir dans un vrai terminal'),
+                                      subtitle=tr('Pour les commandes interactives (htop, ssh, questions…)'),
                                       active=item.terminal if item else False)
         for row in (self.root, self.confirm, self.terminal):
             options.add(row)
@@ -186,7 +188,7 @@ class CommandDialog(Adw.Dialog):
         self._sync_confirmation()
         page.add(options)
 
-        icons_group = Adw.PreferencesGroup(title="Icône")
+        icons_group = Adw.PreferencesGroup(title=tr('Icône'))
         icons = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=8, min_children_per_line=4,
                             column_spacing=6, row_spacing=6, homogeneous=True)
         group = None
@@ -218,8 +220,8 @@ class CommandDialog(Adw.Dialog):
         if root:
             self.confirm.set_active(True)
         self.confirm.set_sensitive(not root)
-        self.confirm.set_subtitle("Obligatoire pour les commandes avec droits administrateur" if root else
-                                  "Une commande peut aussi modifier tes fichiers sans droits administrateur")
+        self.confirm.set_subtitle(tr('Obligatoire pour les commandes avec droits administrateur') if root else
+                                  tr('Une commande peut aussi modifier vos fichiers sans droits administrateur'))
 
     def _validate(self):
         self.save_button.set_sensitive(bool(self.name.get_text().strip() and self._command_text()))

@@ -1,5 +1,7 @@
 """Page Système : état de la machine, disques et actions toutes prêtes."""
 
+from .i18n import _ as tr
+
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -18,13 +20,13 @@ class SystemPage(Gtk.Box):
         self.measured_rows = []
 
         content = page_box()
-        self.card_os = StatCard("Système", "computer-symbolic")
-        self.card_uptime = StatCard("Allumé depuis", "preferences-system-time-symbolic")
-        self.card_mem = StatCard("Mémoire", "media-flash-symbolic")
-        self.card_disk = StatCard("Espace libre", "drive-harddisk-symbolic")
+        self.card_os = StatCard(tr('Système'), "computer-symbolic")
+        self.card_uptime = StatCard(tr('Allumé depuis'), "preferences-system-time-symbolic")
+        self.card_mem = StatCard(tr('Mémoire'), "media-flash-symbolic")
+        self.card_disk = StatCard(tr('Espace libre'), "drive-harddisk-symbolic")
         content.append(stat_grid(self.card_os, self.card_uptime, self.card_mem, self.card_disk))
 
-        self.disk_group = Adw.PreferencesGroup(title="Disques", description="Clique sur un disque pour l'ouvrir")
+        self.disk_group = Adw.PreferencesGroup(title=tr('Disques'), description=tr("Cliquez sur un disque pour l'ouvrir"))
         self.disk_rows = []
         content.append(self.disk_group)
 
@@ -40,10 +42,10 @@ class SystemPage(Gtk.Box):
         row = Adw.ActionRow(title=action.title, subtitle=action.subtitle)
         row.add_prefix(icon_tile(action.icon))
         if action.root:
-            row.add_suffix(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text="Autorisation administrateur requise",
+            row.add_suffix(Gtk.Image(icon_name="changes-prevent-symbolic", tooltip_text=tr('Autorisation administrateur requise'),
                                      css_classes=["dim-label"]))
         button = Gtk.Button(icon_name="folder-open-symbolic" if action.view else "media-playback-start-symbolic",
-                            tooltip_text="Afficher le résumé" if action.view else "Lancer",
+                            tooltip_text=tr('Afficher le résumé') if action.view else tr('Lancer'),
                             valign=Gtk.Align.CENTER, css_classes=["flat", "circular"])
         button.connect("clicked", lambda *_: self._run(action))
         row.add_suffix(button)
@@ -66,7 +68,7 @@ class SystemPage(Gtk.Box):
                             if action.check_space else None)
         if action.confirm:
             self.window.confirm(f"{action.title} ?", action.confirmation or action.subtitle + ".",
-                                "Supprimer" if action.destructive else "Lancer", go,
+                                tr('Supprimer') if action.destructive else tr('Lancer'), go,
                                 destructive=action.destructive)
         else:
             go()
@@ -80,15 +82,15 @@ class SystemPage(Gtk.Box):
 
     def _confirm_autoremove(self, action, packages, error):
         if error or packages is None:
-            self.window.confirm("Nettoyage APT bloqué", (error or "Simulation indisponible") +
-                                "\n\nAucune suppression n'a été lancée.", "Compris", lambda: None,
+            self.window.confirm(tr('Nettoyage APT bloqué'), (error or tr('Simulation indisponible')) +
+                                tr("\n\nAucune suppression n'a été lancée."), tr('Compris'), lambda: None,
                                 destructive=False)
             return
         if not packages:
-            self.window.toast("APT n'a trouvé aucun paquet à supprimer.")
+            self.window.toast(tr("APT n'a trouvé aucun paquet à supprimer."))
             return
-        body = "APT propose de supprimer ces paquets :\n\n" + "\n".join(f"• {pkg}" for pkg in packages)
-        body += "\n\nVérifie cette liste avant de confirmer."
+        body = tr('APT propose de supprimer ces paquets :\n\n') + "\n".join(f"• {pkg}" for pkg in packages)
+        body += tr('\n\nVérifiez cette liste avant de confirmer.')
         self._run(replace(action, preview_autoremove=False, confirmation=body))
 
     def _after(self, action):
@@ -100,10 +102,10 @@ class SystemPage(Gtk.Box):
 
     def refresh(self):
         info = system.overview()
-        self.card_os.set(info["os"], f"Noyau {info['kernel']}")
+        self.card_os.set(info["os"], tr('Noyau {value0}', value0=info['kernel']))
         self.card_uptime.set(info["uptime"], info["host"])
         self.card_mem.set(f"{GLib.format_size(info['mem_used'])}",
-                          f"utilisés sur {GLib.format_size(info['mem_total'])}", info["mem_fraction"])
+                          tr('utilisés sur {value0}', value0=GLib.format_size(info['mem_total'])), info["mem_fraction"])
 
         disks = system.disks()
         for row in self.disk_rows:
@@ -112,7 +114,7 @@ class SystemPage(Gtk.Box):
         for row in self.disk_rows:
             self.disk_group.add(row)
         if root := next((d for d in disks if d.mount == "/"), disks[0] if disks else None):
-            self.card_disk.set(GLib.format_size(root.free), f"sur {GLib.format_size(root.total)} ({root.label})",
+            self.card_disk.set(GLib.format_size(root.free), tr('sur {value0} ({value1})', value0=GLib.format_size(root.total), value1=root.label),
                                root.used / root.total)
 
         threading.Thread(target=self._measure, daemon=True).start()
@@ -121,7 +123,7 @@ class SystemPage(Gtk.Box):
         row = Adw.ActionRow(title=disk.label, subtitle=f"{disk.mount} · {disk.device}", activatable=True)
         row.add_prefix(icon_tile("drive-harddisk-symbolic"))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.CENTER, width_request=240)
-        box.append(Gtk.Label(label=f"{GLib.format_size(disk.free)} libres sur {GLib.format_size(disk.total)}",
+        box.append(Gtk.Label(label=tr('{value0} libres sur {value1}', value0=GLib.format_size(disk.free), value1=GLib.format_size(disk.total)),
                              xalign=1, css_classes=["caption", "numeric"]))
         box.append(usage_bar(disk.used / disk.total))
         row.add_suffix(box)
@@ -136,6 +138,6 @@ class SystemPage(Gtk.Box):
             except OSError:
                 size = None
             if size is not None:
-                text = f"{action.subtitle} · <b>{GLib.format_size(size)}</b> à récupérer" if size else \
-                    f"{action.subtitle} · rien à récupérer"
+                text = tr('{value0} · <b>{value1}</b> à récupérer', value0=action.subtitle, value1=GLib.format_size(size)) if size else \
+                    tr('{value0} · rien à récupérer', value0=action.subtitle)
                 GLib.idle_add(row.set_subtitle, text)

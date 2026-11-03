@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import _ as tr
+
 import os
 import re
 import shutil
@@ -32,7 +34,7 @@ def cpu_model() -> str:
     for line in _read("/proc/cpuinfo").splitlines():
         if line.startswith("model name"):
             return re.sub(r"\s+\d+-Core Processor$", "", line.split(":", 1)[1].strip())
-    return "Processeur"
+    return tr('Processeur')
 
 
 class CpuSampler:
@@ -156,7 +158,7 @@ def _amd_gpus() -> list[Gpu]:
         busy = _read(device / "gpu_busy_percent")
         if not busy.isdigit():
             continue
-        gpu = Gpu("Carte graphique AMD", int(busy) / 100)
+        gpu = Gpu(tr('Carte graphique AMD'), int(busy) / 100)
         used, total = _read(device / "mem_info_vram_used"), _read(device / "mem_info_vram_total")
         if used.isdigit() and total.isdigit():
             gpu.mem_used, gpu.mem_total = int(used), int(total)
@@ -266,9 +268,9 @@ class AppSampler:
 
 def _describe(key: str) -> tuple[str, Gio.Icon | None]:
     if key == SHELL:
-        return "Bureau GNOME", Gio.ThemedIcon.new("user-desktop")
+        return tr('Bureau GNOME'), Gio.ThemedIcon.new("user-desktop")
     if key == OTHERS:
-        return "Services et arrière-plan", Gio.ThemedIcon.new("system-run")
+        return tr('Services et arrière-plan'), Gio.ThemedIcon.new("system-run")
     if key == MANETTE:
         return "Manette", Gio.ThemedIcon.new("local.Manette")
     if info := _desktop_info(key):

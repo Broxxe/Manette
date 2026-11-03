@@ -1,5 +1,7 @@
 """Panneau qui exécute une commande et affiche sa sortie en direct."""
 
+from .i18n import _ as tr
+
 import os
 import re
 import signal
@@ -25,15 +27,15 @@ class Console(Gtk.Box):
         self.title = ""
         self.on_done = None
 
-        self.status = Adw.WindowTitle(title="Console", subtitle="Prête")
+        self.status = Adw.WindowTitle(title=tr('Console'), subtitle=tr('Prête'))
         header = Adw.HeaderBar(title_widget=self.status)
         self.spinner = Adw.Spinner(visible=False)
-        self.stop_button = Gtk.Button(icon_name="media-playback-stop-symbolic", tooltip_text="Arrêter",
+        self.stop_button = Gtk.Button(icon_name="media-playback-stop-symbolic", tooltip_text=tr('Arrêter'),
                                       sensitive=False, css_classes=["flat"])
         self.stop_button.connect("clicked", lambda *_: self.stop())
-        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copier la sortie")
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text=tr('Copier la sortie'))
         copy.connect("clicked", lambda *_: self._copy())
-        clear = Gtk.Button(icon_name="edit-clear-all-symbolic", tooltip_text="Effacer")
+        clear = Gtk.Button(icon_name="edit-clear-all-symbolic", tooltip_text=tr('Effacer'))
         clear.connect("clicked", lambda *_: self.clear())
         header.pack_start(self.stop_button)
         header.pack_start(self.spinner)
@@ -52,8 +54,8 @@ class Console(Gtk.Box):
         self.end_mark = self.buffer.create_mark("end", self.buffer.get_end_iter(), False)
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
-        self.stack.add_named(Adw.StatusPage(icon_name="utilities-terminal-symbolic", title="Rien pour l'instant",
-                                            description="Clique sur un bouton : le résultat s'affiche ici en direct.",
+        self.stack.add_named(Adw.StatusPage(icon_name="utilities-terminal-symbolic", title=tr("Rien pour l'instant"),
+                                            description=tr("Cliquez sur un bouton : le résultat s'affiche ici en direct."),
                                             css_classes=["compact"]), "empty")
         self.stack.add_named(Gtk.ScrolledWindow(child=self.view, hscrollbar_policy=Gtk.PolicyType.NEVER), "log")
         self.toolbar.set_content(self.stack)
@@ -77,7 +79,7 @@ class Console(Gtk.Box):
             # setsid : la commande a son propre groupe de processus, qu'on peut arrêter d'un coup.
             proc = launcher.spawnv(["setsid", *argv])
         except GLib.Error as error:
-            self._write(f"✘ Impossible de lancer la commande : {error.message}\n", "error")
+            self._write(tr('✘ Impossible de lancer la commande : {value0}\n', value0=error.message), "error")
             return
 
         self.proc, self.title, self.on_done = proc, title, on_done
@@ -129,17 +131,17 @@ class Console(Gtk.Box):
         code = proc.get_exit_status() if proc.get_if_exited() else -1
         ok = code == 0
         if ok:
-            self._write("✔ Terminé\n", "ok")
+            self._write(tr('✔ Terminé\n'), "ok")
         elif code == -1:
-            self._write("✘ Arrêté\n", "error")
+            self._write(tr('✘ Arrêté\n'), "error")
         elif code in (126, 127):
-            self._write(f"✘ Échec (code {code}) : mot de passe refusé ou annulé ?\n", "error")
+            self._write(tr('✘ Échec (code {value0}) : mot de passe refusé ou annulé ?\n', value0=code), "error")
         else:
-            self._write(f"✘ Échec (code {code})\n", "error")
+            self._write(tr('✘ Échec (code {value0})\n', value0=code), "error")
 
         title, on_done = self.title, self.on_done
         self.proc, self.on_done = None, None
-        self._set_running(False, "Terminé" if ok else "Échec")
+        self._set_running(False, tr('Terminé') if ok else tr('Échec'))
         if on_done:
             on_done(ok)
         self.on_finished(title, ok)

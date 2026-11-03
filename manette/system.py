@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import _ as tr, number
+
 import os
 import platform
 import re
@@ -30,10 +32,10 @@ def space_warnings(paths: list[str | Path]) -> list[str]:
             seen.add(device)
             free = shutil.disk_usage(path).free
             if free < 5 * 1024**3:
-                amount = f"{free / 1024**3:.1f}".replace(".", ",")
-                warnings.append(f"{path} : {amount} Gio libres (moins de 5 Gio)")
+                amount = number(f"{free / 1024**3:.1f}")
+                warnings.append(tr('{value0} : {value1} Gio libres (moins de 5 Gio)', value0=path, value1=amount))
         except OSError:
-            warnings.append(f"{path} : espace libre impossible à vérifier")
+            warnings.append(tr('{value0} : espace libre impossible à vérifier', value0=path))
     return warnings
 
 
@@ -70,9 +72,9 @@ def disks() -> list[Disk]:
 
 def _disk_label(mount: str) -> str:
     if mount == "/":
-        return "Système"
+        return tr('Système')
     if mount == str(Path.home()) or mount == "/home":
-        return "Dossier personnel"
+        return tr('Dossier personnel')
     return Path(mount).name
 
 
@@ -88,7 +90,7 @@ def overview() -> dict[str, str | float]:
     seconds = int(float(Path("/proc/uptime").read_text().split()[0]))
     days, rest = divmod(seconds, 86400)
     hours, minutes = rest // 3600, rest % 3600 // 60
-    uptime = f"{days} j {hours} h" if days else f"{hours} h {minutes:02d}" if hours else f"{minutes} min"
+    uptime = tr('{value0} j {value1} h', value0=days, value1=hours) if days else f"{hours} h {minutes:02d}" if hours else f"{minutes} min"
 
     mem = {}
     for line in Path("/proc/meminfo").read_text().splitlines():
@@ -211,63 +213,58 @@ BIG_PACKAGES = r"""dpkg-query -W -f='${Installed-Size}\t${Package}\n' | sort -rn
 
 def action_groups() -> list[tuple[str, str, list[Action]]]:
     updates = [
-        Action("Vérifier les mises à jour", "Actualise les sources et liste ce qui peut être mis à jour",
+        Action(tr('Vérifier les mises à jour'), tr('Actualise les sources et liste ce qui peut être mis à jour'),
                "view-refresh-symbolic", CHECK_UPDATES, "apt-get update · apt list --upgradable · snap · flatpak",
                root=True, rescan=True),
-        Action("Tout mettre à jour", "APT, Snap et Flatpak en une seule fois", "software-update-available-symbolic",
+        Action(tr('Tout mettre à jour'), tr('APT, Snap et Flatpak en une seule fois'), "software-update-available-symbolic",
                UPDATE_ALL, "apt-get upgrade · snap refresh · flatpak update", root=True, rescan=True, confirm=True,
                check_space=True),
     ]
     if shutil.which("fwupdmgr"):
-        updates.append(Action("Firmwares", "Mises à jour du BIOS et des périphériques (fwupd)",
+        updates.append(Action(tr('Firmwares'), tr('Mises à jour du BIOS et des périphériques (fwupd)'),
                               "application-x-firmware-symbolic", "fwupdmgr refresh --force; fwupdmgr get-updates"))
 
     cleanup = [
-        Action("Paquets devenus inutiles", "Dépendances qui ne servent plus à rien", "edit-clear-all-symbolic",
+        Action(tr('Paquets devenus inutiles'), tr('Dépendances qui ne servent plus à rien'), "edit-clear-all-symbolic",
                "pkexec env DEBIAN_FRONTEND=noninteractive apt-get -y autoremove", root=True, rescan=True,
                confirm=True, destructive=True, preview_autoremove=True),
-        Action("Cache des paquets APT", "Les .deb déjà installés, gardés pour rien", "folder-download-symbolic",
+        Action(tr('Cache des paquets APT'), tr('Les .deb déjà installés, gardés pour rien'), "folder-download-symbolic",
                "pkexec apt-get clean && echo 'Cache APT vidé.'", root=True, confirm=True, destructive=True,
-               confirmation="Les paquets téléchargés du cache APT seront supprimés. Une prochaine installation "
-                            "pourra devoir les télécharger à nouveau. Les applications installées sont conservées.",
+               confirmation=tr('Les paquets téléchargés du cache APT seront supprimés. Une prochaine installation pourra devoir les télécharger à nouveau. Les applications installées sont conservées.'),
                measure=lambda: _du("/var/cache/apt/archives")),
-        Action("Anciennes versions des Snaps", "Snap garde les révisions précédentes de chaque app",
+        Action(tr('Anciennes versions des Snaps'), tr('Snap garde les révisions précédentes de chaque app'),
                "view-paged-symbolic", OLD_SNAPS, "snap remove --revision (révisions désactivées)", root=True,
                confirm=True, destructive=True, measure=_old_snaps_size,
-               confirmation="Les révisions désactivées seront supprimées. Tu perdras la possibilité de revenir "
-                            "à ces anciennes versions. Les révisions actives sont conservées."),
-        Action("Runtimes Flatpak inutilisés", "Bibliothèques qui ne servent plus à aucune app",
+               confirmation=tr('Les révisions désactivées seront supprimées. Vous perdrez la possibilité de revenir à ces anciennes versions. Les révisions actives sont conservées.')),
+        Action(tr('Runtimes Flatpak inutilisés'), tr('Bibliothèques qui ne servent plus à aucune app'),
                "application-x-addon-symbolic", "flatpak uninstall --unused -y", confirm=True, destructive=True,
-               confirmation="Les runtimes Flatpak considérés comme inutilisés seront supprimés. Ils pourront "
-                            "être téléchargés à nouveau si une application en a besoin."),
-        Action("Journaux système", "Ne garde que les 200 derniers Mo de journaux", "text-x-generic-symbolic",
+               confirmation=tr('Les runtimes Flatpak considérés comme inutilisés seront supprimés. Ils pourront être téléchargés à nouveau si une application en a besoin.')),
+        Action(tr('Journaux système'), tr('Conserver uniquement les 200 derniers Mo de journaux'), "text-x-generic-symbolic",
                "pkexec journalctl --vacuum-size=200M", root=True, confirm=True, destructive=True, measure=_journal_size,
-               confirmation="Les anciens journaux archivés seront supprimés pour viser 200 Mo. "
-                            "Cet historique de diagnostic ne pourra pas être récupéré."),
-        Action("Miniatures en cache", "Aperçus d'images régénérés automatiquement", "image-x-generic-symbolic",
+               confirmation=tr('Les anciens journaux archivés seront supprimés pour viser 200 Mo. Cet historique de diagnostic ne pourra pas être récupéré.')),
+        Action(tr('Miniatures en cache'), tr("Aperçus d'images régénérés automatiquement"), "image-x-generic-symbolic",
                'rm -rf "$HOME/.cache/thumbnails/"* && echo "Miniatures supprimées."',
                confirm=True, destructive=True,
-               confirmation="Les miniatures en cache seront supprimées puis régénérées au besoin. "
-                            "Les photos et documents d'origine sont conservés.",
+               confirmation=tr("Les miniatures en cache seront supprimées puis régénérées au besoin. Les photos et documents d'origine sont conservés."),
                measure=lambda: _du(Path.home() / ".cache" / "thumbnails")),
     ]
 
     diagnostic = [
-        Action("Ce qui prend de la place chez toi", "Les plus gros dossiers de ton dossier personnel",
+        Action(tr('Occupation du dossier personnel'), tr('Les plus gros dossiers du dossier personnel'),
                "folder-symbolic", "", view="storage"),
-        Action("Les plus gros paquets", "Les 25 paquets APT qui pèsent le plus lourd", "package-x-generic-symbolic",
+        Action(tr('Les plus gros paquets'), tr('Les 25 paquets APT qui pèsent le plus lourd'), "package-x-generic-symbolic",
                BIG_PACKAGES, "dpkg-query … | sort -rn | head -n 25"),
-        Action("Services en échec", "Services système et utilisateur qui ont planté", "dialog-warning-symbolic",
+        Action(tr('Services en échec'), tr('Services système et utilisateur qui ont planté'), "dialog-warning-symbolic",
                "systemctl --failed --no-pager; echo; systemctl --user --failed --no-pager"),
-        Action("Erreurs depuis le démarrage", "Les 60 dernières erreurs du journal", "dialog-error-symbolic",
+        Action(tr('Erreurs depuis le démarrage'), tr('Les 60 dernières erreurs du journal'), "dialog-error-symbolic",
                "journalctl -b -p 3 --no-pager -n 60"),
-        Action("Réseau", "Interfaces, adresses IP et route par défaut", "network-wired-symbolic",
+        Action(tr('Réseau'), tr('Interfaces, adresses IP et route par défaut'), "network-wired-symbolic",
                "ip -br address; echo; ip route | head -n 5"),
     ]
     if shutil.which("sensors"):
-        diagnostic.append(Action("Températures", "Capteurs du processeur, de la carte mère et des disques",
+        diagnostic.append(Action(tr('Températures'), tr('Capteurs du processeur, de la carte mère et des disques'),
                                  "weather-clear-symbolic", "sensors"))
 
-    return [("Mises à jour", "Garder tout le système à jour", updates),
-            ("Nettoyage", "Récupérer de l'espace disque", cleanup),
-            ("Diagnostic", "Comprendre ce qui se passe sur la machine", diagnostic)]
+    return [(tr('Mises à jour'), tr('Garder tout le système à jour'), updates),
+            (tr('Nettoyage'), tr("Récupérer de l'espace disque"), cleanup),
+            (tr('Diagnostic'), tr('Comprendre ce qui se passe sur la machine'), diagnostic)]

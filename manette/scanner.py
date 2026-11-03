@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import _ as tr
+
 import json
 import os
 import re
@@ -18,12 +20,12 @@ from gi.repository import Gio, GLib
 APT, DEB, FLATPAK, SNAP, APPIMAGE, LOCAL = "apt", "deb", "flatpak", "snap", "appimage", "local"
 
 SOURCES = {
-    APT: "Dépôt APT",
-    DEB: ".deb manuel",
+    APT: tr('Dépôt APT'),
+    DEB: tr('.deb manuel'),
     FLATPAK: "Flatpak",
     SNAP: "Snap",
     APPIMAGE: "AppImage",
-    LOCAL: "Local",
+    LOCAL: tr('Local'),
 }
 
 # .deb installés à la main dont le champ Homepage ne mène pas au dépôt GitHub.
@@ -75,10 +77,10 @@ def _run(*argv: str, timeout: int = 30, warnings: list[str] | None = None) -> st
                              env={**os.environ, "LC_ALL": "C.UTF-8"})
     except (OSError, subprocess.TimeoutExpired) as error:
         if warnings is not None:
-            warnings.append(f"{argv[0]} : vérification impossible ({error})")
+            warnings.append(tr('{value0} : vérification impossible ({value1})', value0=argv[0], value1=error))
         return ""
     if out.returncode and warnings is not None:
-        detail = out.stderr.strip() or f"code {out.returncode}"
+        detail = out.stderr.strip() or tr('code {value0}', value0=out.returncode)
         warnings.append(f"{argv[0]} : {detail}")
         return ""
     return out.stdout
@@ -130,7 +132,7 @@ def _scan_debs(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> lis
         if not desktop_id or Path(desktop_id).name != desktop_id:
             continue
         for base in GLib.get_system_data_dirs():
-            candidate = Path(base) / "applications" / desktop_id
+            candidate = Path(base) / 'applications' / desktop_id
             if str(candidate) == path or not candidate.is_file():
                 continue
             try:
@@ -174,7 +176,7 @@ def _scan_debs(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> lis
         seen.add(pkg)
         version, size, homepage = meta.get(pkg, ("", None, ""))
         app = App(info.get_display_name(), DEB if pkg in manual else APT, pkg, version, size, info)
-        launcher_dir = Path(GLib.get_user_data_dir()) / "applications"
+        launcher_dir = Path(GLib.get_user_data_dir()) / 'applications'
         app.local_launchers = [p for p in infos if owners.get(p) == pkg and Path(p).parent == launcher_dir]
         if app.source == APT:
             app.update = upgradable.get(pkg)
@@ -225,16 +227,16 @@ def _check_github(app: App, homepage: str, warnings: list[str]) -> None:
     if m := re.match(r"https?://github\.com/([^/\s]+/[^/\s#?]+)", homepage or ""):
         repo = m.group(1).removesuffix(".git")
     if not repo:
-        app.note = "aucune source de mise à jour connue"
+        app.note = tr('aucune source de mise à jour connue')
         return
-    app.note = f"suivi via GitHub ({repo})"
+    app.note = tr('suivi via GitHub ({value0})', value0=repo)
     request = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest",
                                      headers={"Accept": "application/vnd.github+json", "User-Agent": "Manette"})
     try:
         with urllib.request.urlopen(request, timeout=6) as response:
             release = json.load(response)
     except (OSError, ValueError):
-        app.note = f"GitHub injoignable ({repo})"
+        app.note = tr('GitHub injoignable ({value0})', value0=repo)
         warnings.append(f"{app.name} : {app.note}")
         return
     latest = release.get("tag_name", "").lstrip("vV")
@@ -262,7 +264,7 @@ def _parse_size(text: str) -> int | None:
 def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) -> list[App]:
     if not shutil.which("flatpak"):
         if infos:
-            warnings.append("Flatpak introuvable : applications non vérifiées")
+            warnings.append(tr('Flatpak introuvable : applications non vérifiées'))
         return []
     updates = {}
     out = _run("flatpak", "remote-ls", "--updates", "--app", "--columns=application,version", timeout=60,
@@ -270,7 +272,7 @@ def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) ->
     for line in out.splitlines():
         fid, _, version = line.partition("\t")
         if fid:
-            updates[fid] = version or "nouvelle révision"
+            updates[fid] = version or tr('nouvelle révision')
     apps = []
     for line in _run("flatpak", "list", "--app", "--columns=application,name,version,size,installation",
                      warnings=warnings).splitlines():
@@ -281,7 +283,7 @@ def _scan_flatpaks(infos: dict[str, Gio.DesktopAppInfo], warnings: list[str]) ->
         info = infos.get(fid)
         update = updates.get(fid)
         if update == version:
-            update = "nouvelle révision"
+            update = tr('nouvelle révision')
         apps.append(App(info.get_display_name() if info else name, FLATPAK, fid, version, _parse_size(size),
                         info, update, note=fid, installation=installation))
     return apps
@@ -364,7 +366,7 @@ def update_command(app: App) -> Command | None:
         script = "\n".join([
             "set -e",
             f"mkdir -p {q(str(CACHE_DIR))}",
-            f"echo {q(f'Téléchargement de {target.name}…')}",
+            f"echo {q(tr('Téléchargement de {value0}…', value0=target.name))}",
             f"curl -fsSL -o {q(str(target))} {q(app.update_url)}",
             "echo 'Installation…'",
             f"pkexec env DEBIAN_FRONTEND=noninteractive apt-get -y install {q(str(target))}",
@@ -397,7 +399,7 @@ def update_all_command(apps: list[App]) -> Command | None:
     if debs:
         script.append(f"mkdir -p {q(str(CACHE_DIR))}")
     for app, target in debs:
-        script += [f"echo {q(f'== Téléchargement de {app.name} {app.update} ==')}",
+        script += [f"echo {q(tr('== Téléchargement de {value0} {value1} ==', value0=app.name, value1=app.update))}",
                    f"curl -fsSL -o {q(str(target))} {q(app.update_url)} || {{ status=1; rm -f {q(str(target))}; }}"]
         display.append(f"curl {app.update_url}")
     if apt:
@@ -405,7 +407,7 @@ def update_all_command(apps: list[App]) -> Command | None:
         display.append(f"apt-get install --only-upgrade {' '.join(apt)}")
     for app, target in debs:
         root += [f"if [ -f {q(str(target))} ]; then",
-                 f"  echo {q(f'== Installation de {app.name} {app.update} ==')}",
+                 f"  echo {q(tr('== Installation de {value0} {value1} ==', value0=app.name, value1=app.update))}",
                  f"  apt-get -y install {q(str(target))} || s=1",
                  "fi"]
         display.append(f"apt-get install ./{target.name}")
@@ -444,10 +446,10 @@ def apt_removal_preview(*args: str) -> list[str]:
         result = subprocess.run(["apt-get", "-s", *args], capture_output=True, text=True, timeout=30,
                                 env={**os.environ, "LC_ALL": "C.UTF-8"})
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise RemovalPreviewError(f"Simulation APT impossible : {error}") from error
+        raise RemovalPreviewError(tr('Simulation APT impossible : {value0}', value0=error)) from error
     if result.returncode:
-        detail = result.stderr.strip() or f"code {result.returncode}"
-        raise RemovalPreviewError(f"Simulation APT échouée : {detail}")
+        detail = result.stderr.strip() or tr('code {value0}', value0=result.returncode)
+        raise RemovalPreviewError(tr('Simulation APT échouée : {value0}', value0=detail))
     return re.findall(r"^Remv (\S+)", result.stdout, re.M)
 
 
