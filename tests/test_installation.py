@@ -28,6 +28,7 @@ class SpaceTests(unittest.TestCase):
     def test_low_space_requires_confirmation_before_start(self):
         window = Mock()
         window.console.busy = False
+        window._space_check_pending = False
         with patch('manette.app.system.space_warnings', return_value=['/ : 3 Gio libres']):
             Window.run(window, ['apt-get'], 'Mise à jour', space_paths=['/'])
         window.console.run.assert_not_called()

@@ -3,6 +3,72 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
+
+# Agent sessions, private memory and local instructions
+.agent/
+.agents/
+.codex/
+.claude/
+.gemini/
+.cursor/
+.aider*
+.agent-memory/
+AGENTS.local.md
+CLAUDE.local.md
+GEMINI.local.md
+MEMORY.md
+memory.md
+/memory/
+/memories/
+
+# Secrets and local credentials (keep sanitized environment templates publishable)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.aws/
+.ssh/
+.gnupg/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials*.json
+secrets*.json
+service-account*.json
+
+# Local application data, operation history, logs and backups
+/preferences.json
+/commandes.json
+/dossiers.json
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.log
+*.bak
+/tmp/
 
 # Éditeurs et système
 .vscode/
@@ -13,3 +79,6 @@ venv/
 
 # Archives faites pour copier le projet à la main
 *.tar.gz
+*.tar
+*.tgz
+*.zip

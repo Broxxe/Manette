@@ -4,6 +4,7 @@ from .i18n import _ as tr
 
 import sys
 import os
+import sqlite3
 from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
@@ -13,7 +14,9 @@ from .console import Console
 from .custom_page import CustomPage
 from .monitor_page import MonitorPage
 from .system_page import SystemPage
-from . import preferences, system
+from . import history, preferences, system
+from .history_dialog import HistoryDialog, DiagnosticDialog
+from .space_dialog import SpaceDialog
 from .settings_dialog import SettingsDialog, automatic_check, periodic_check
 
 APP_ID = "local.Manette"
@@ -24,6 +27,11 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Manette", default_width=1280, default_height=840,
                          width_request=360, height_request=480)
+        self._space_check_pending = False
+        try:
+            history.recover()
+        except (OSError, sqlite3.Error):
+            pass
         self.console = Console(on_finished=self._on_finished)
 
         self.stack = Adw.ViewStack()
@@ -42,6 +50,9 @@ class Window(Adw.ApplicationWindow):
                                          action_name="win.refresh")
         header.pack_start(self.refresh_button)
         menu = Gio.Menu()
+        menu.append(tr('Historique des opérations'), 'win.history')
+        menu.append(tr('Diagnostic des mises à jour'), 'win.diagnostics')
+        menu.append(tr('Recherche globale'), 'win.search')
         menu.append(tr('Préférences et mises à jour'), "win.settings")
         menu.append(tr('Ouvrir le fichier des commandes'), "win.open-config")
         menu.append(tr('À propos de Manette'), "app.about")
@@ -51,6 +62,10 @@ class Window(Adw.ApplicationWindow):
                                     tooltip_text=tr('Réglages de Manette'), css_classes=['flat', 'circular']))
         console_toggle = Gtk.ToggleButton(icon_name="utilities-terminal-symbolic", tooltip_text=tr('Console (Ctrl+J)'))
         header.pack_end(console_toggle)
+        header.pack_start(Gtk.Button(icon_name='edit-find-symbolic', action_name='win.search',
+                                     tooltip_text=tr('Recherche globale (Ctrl+K)'), css_classes=['flat']))
+        header.pack_end(Gtk.Button(icon_name='document-open-recent-symbolic', action_name='win.history',
+                                   tooltip_text=tr('Historique des opérations'), css_classes=['flat']))
 
         main = Adw.ToolbarView(content=self.stack, top_bar_style=Adw.ToolbarStyle.RAISED_BORDER)
         main.add_css_class('manette-content')
@@ -75,6 +90,9 @@ class Window(Adw.ApplicationWindow):
 
         for name, callback in (("refresh", self.refresh), ("open-config", self._open_config),
                                ("settings", lambda: SettingsDialog(self).present(self)),
+                               ('history', lambda: HistoryDialog(self).present(self)),
+                               ('diagnostics', lambda: DiagnosticDialog(self).present(self)),
+                               ('search', self._search),
                                ("toggle-console", lambda: self.split.set_show_sidebar(not self.split.get_show_sidebar()))):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_, cb=callback: cb())
@@ -113,11 +131,19 @@ class Window(Adw.ApplicationWindow):
         self.refresh_button.set_sensitive(not scanning)
         self.refresh_button.set_child(Adw.Spinner() if scanning else Gtk.Image(icon_name="view-refresh-symbolic"))
 
-    def run(self, argv, title, display=None, on_done=None, space_paths=None):
+    def run(self, argv, title, display=None, on_done=None, space_paths=None, space_request=None):
         if self.console.busy:
             self.split.set_show_sidebar(True)
             self.confirm(tr('Une opération est déjà en cours'), tr("« {value0} » continue. « {value1} » n'a pas été lancé. Attendez la fin de l'opération.", value0=self.console.title, value1=title),
                          tr('Compris'), lambda: None, destructive=False)
+            return
+        if self._space_check_pending:
+            self.toast(tr('Un contrôle d’espace est déjà ouvert.'))
+            return
+        if space_request is not None:
+            self._space_check_pending = True
+            SpaceDialog(self, space_request, space_paths or [],
+                        lambda: self.run(argv, title, display, on_done)).present(self)
             return
         if space_paths is not None:
             warnings = system.space_warnings(space_paths)
@@ -148,6 +174,16 @@ class Window(Adw.ApplicationWindow):
             notification.set_body(tr('Le détail est dans la console de Manette.'))
             self.get_application().send_notification("command-finished", notification)
 
+    def _search(self):
+        from .search_dialog import SearchDialog
+        SearchDialog(self).present(self)
+
+    def record_operation(self, title, ok=True, output='', command='', status=None):
+        try:
+            history.record(title, 0 if ok else 1, output, command, status)
+        except (OSError, sqlite3.Error):
+            self.toast(tr('Historique indisponible'))
+
     def _open_config(self):
         from . import commands
         commands.PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +209,8 @@ class ManetteApp(Adw.Application):
         self.add_action(quit_action)
         self.set_accels_for_action("app.quit", ["<Control>q"])
         self.set_accels_for_action("win.refresh", ["<Control>r"])
+        self.set_accels_for_action('win.search', ['<Control>k'])
+        self.set_accels_for_action('win.history', ['<Control>h'])
         self.set_accels_for_action("win.toggle-console", ["<Control>j"])
 
     def do_activate(self):

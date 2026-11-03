@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from gi.repository import Adw, Gtk, Pango
 
-from . import commands
+from . import commands, favorites
 from .commands import Custom
 from .widgets import page_box, page_scroller
 
@@ -17,6 +17,10 @@ class CustomPage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.window = window
         self.items = commands.load()
+        try:
+            self.favorites = favorites.load()
+        except (OSError, ValueError):
+            self.favorites = set()
 
         content = page_box()
         head = Gtk.Box(spacing=12)
@@ -28,6 +32,9 @@ class CustomPage(Gtk.Box):
                          child=Adw.ButtonContent(icon_name="list-add-symbolic", label=tr('Nouvelle commande')))
         add.connect("clicked", lambda *_: self.edit(None))
         head.append(titles)
+        self.only_favorites = Gtk.ToggleButton(icon_name='starred-symbolic', tooltip_text=tr('Favoris'))
+        self.only_favorites.connect('toggled', lambda *_: self._render())
+        head.append(self.only_favorites)
         head.append(add)
         content.append(head)
 
@@ -36,20 +43,24 @@ class CustomPage(Gtk.Box):
                                 row_spacing=12, min_children_per_line=1, max_children_per_line=4,
                                 valign=Gtk.Align.START)
         self.stack.add_named(self.grid, "grid")
-        empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title=tr('Aucune commande'),
+        self.empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title=tr('Aucune commande'),
                                description=tr('Créez votre premier bouton avec « Nouvelle commande ».'),
                                css_classes=["compact"])
-        self.stack.add_named(empty, "empty")
+        self.stack.add_named(self.empty, "empty")
         content.append(self.stack)
         self.append(page_scroller(content))
         self._render()
 
     def _render(self):
         self.grid.remove_all()
-        for item in self.items:
+        visible = [item for item in self.items if not self.only_favorites.get_active() or self.is_favorite(item)]
+        for item in sorted(visible, key=lambda item: not self.is_favorite(item)):
             self.grid.append(self._tile(item))
             self.grid.get_last_child().set_focusable(False)
-        self.stack.set_visible_child_name("grid" if self.items else "empty")
+        self.stack.set_visible_child_name("grid" if visible else "empty")
+        self.empty.set_title(tr('Aucun favori') if self.only_favorites.get_active() else tr('Aucune commande'))
+        self.empty.set_description(tr('Ajoutez une commande aux favoris depuis son menu ⋯.') if self.only_favorites.get_active()
+                                   else tr('Créez votre premier bouton avec « Nouvelle commande ».'))
 
     def _tile(self, item: Custom) -> Gtk.Widget:
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -63,6 +74,8 @@ class CustomPage(Gtk.Box):
         if item.terminal:
             top.append(Gtk.Image(icon_name="utilities-terminal-symbolic", tooltip_text=tr("S'ouvre dans un terminal"),
                                  valign=Gtk.Align.END, css_classes=["dim-label"]))
+        if self.is_favorite(item):
+            top.append(Gtk.Image(icon_name='starred-symbolic', tooltip_text=tr('Favori')))
         body.append(top)
         body.append(Gtk.Label(label=item.name, xalign=0, wrap=True, max_width_chars=24, css_classes=["heading"]))
         if item.description:
@@ -80,7 +93,8 @@ class CustomPage(Gtk.Box):
                               css_classes=["flat", "circular"], tooltip_text=tr('Options'))
         popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         popover = Gtk.Popover(child=popover_box)
-        for label, callback in ((tr('Modifier'), lambda: self.edit(item)), (tr('Dupliquer'), lambda: self._duplicate(item)),
+        for label, callback in ((tr('Retirer des favoris') if self.is_favorite(item) else tr('Ajouter aux favoris'),
+                                 lambda: self.toggle_favorite(item)), (tr('Modifier'), lambda: self.edit(item)), (tr('Dupliquer'), lambda: self._duplicate(item)),
                                 (tr('Supprimer'), lambda: self._delete(item))):
             entry = Gtk.Button(label=label, css_classes=["flat"])
             entry.get_child().set_xalign(0)
@@ -94,6 +108,17 @@ class CustomPage(Gtk.Box):
 
     # --- Actions ----------------------------------------------------------
 
+    def is_favorite(self, item):
+        return favorites.command_key(item) in self.favorites
+
+    def toggle_favorite(self, item):
+        try:
+            self.favorites = favorites.toggle(favorites.command_key(item))
+        except (OSError, ValueError) as error:
+            self.window.toast(tr('Favoris non enregistrés : {value0}', value0=error))
+            return
+        self._render()
+
     def run(self, item: Custom):
         def go():
             if item.terminal:
@@ -101,7 +126,14 @@ class CustomPage(Gtk.Box):
                 if not argv:
                     self.window.toast(tr('Aucun terminal trouvé.'))
                     return
-                subprocess.Popen(argv, start_new_session=True)
+                try:
+                    subprocess.Popen(argv, start_new_session=True)
+                    self.window.record_operation(item.name, command=item.command,
+                        output=tr('Commande ouverte dans un terminal externe. Son résultat n’est pas suivi par Manette.'), status='external')
+                except OSError as error:
+                    self.window.record_operation(item.name, False, str(error), item.command)
+                    self.window.toast(str(error))
+                    return
                 self.window.toast(tr("« {value0} » s'ouvre dans le terminal", value0=item.name))
             else:
                 self.window.run(commands.argv(item), item.name, item.command)

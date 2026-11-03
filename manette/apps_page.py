@@ -9,12 +9,12 @@ from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
-from . import local_apps, local_removal, preferences, scanner
+from . import favorites, local_apps, local_removal, preferences, scanner, space
 from .scanner import APPIMAGE, APT, DEB, SOURCES
 from .data_dialog import DataDialog
 from .widgets import StatCard, page_box, page_scroller, plural, stat_grid
 
-FILTERS = [("all", tr('Toutes')), ("updates", tr('Mises à jour')), *SOURCES.items()]
+FILTERS = [("all", tr('Toutes')), ("favorites", tr('Favoris')), ("updates", tr('Mises à jour')), *SOURCES.items()]
 REMOVABLE = {APT, DEB, scanner.FLATPAK, scanner.SNAP, APPIMAGE, scanner.LOCAL}
 
 
@@ -26,6 +26,10 @@ class AppsPage(Gtk.Box):
         self.filter = "all"
         self.query = ""
         self.scanning = False
+        try:
+            self.favorites = favorites.load()
+        except (OSError, ValueError):
+            self.favorites = set()
         try:
             mode = preferences.load().get('applications_view', 'grid')
         except (OSError, ValueError):
@@ -175,7 +179,7 @@ class AppsPage(Gtk.Box):
         group = None
         for key, label in FILTERS:
             count = len(self.apps) if key == "all" else sum(self._matches(a, key) for a in self.apps)
-            if key not in ("all", "updates") and not count:
+            if key not in ("all", "updates", "favorites") and not count:
                 continue
             chip = Gtk.ToggleButton(label=f"{label}  {count}", css_classes=["chip"], active=key == self.filter)
             if group:
@@ -186,9 +190,27 @@ class AppsPage(Gtk.Box):
 
     # --- Filtre et tri ----------------------------------------------------
 
-    @staticmethod
-    def _matches(app, key):
-        return key == "all" or (key == "updates" and bool(app.update)) or app.source == key
+    def _matches(self, app, key):
+        return (key == 'all' or (key == 'favorites' and self.is_favorite(app))
+                or (key == 'updates' and bool(app.update)) or app.source == key)
+
+    def is_favorite(self, app):
+        return favorites.application_key(app) in self.favorites
+
+    def toggle_favorite(self, app):
+        try:
+            self.favorites = favorites.toggle(favorites.application_key(app))
+        except (OSError, ValueError) as error:
+            self.window.toast(tr('Favoris non enregistrés : {value0}', value0=error))
+            return
+        self.list.remove_all()
+        self.grid.remove_all()
+        for item in self.apps:
+            self.list.append(AppRow(item, self))
+            self.grid.append(AppCard(item, self))
+            self.grid.get_last_child().set_focusable(False)
+        self._build_chips()
+        self._invalidate_filter()
 
     def _set_filter(self, key):
         if self.filter != key:
@@ -228,6 +250,9 @@ class AppsPage(Gtk.Box):
         return not self.query or self.query in f"{app.name} {app.ident}".casefold()
 
     def _sort_rows(self, a, b):
+        left_favorite, right_favorite = self.is_favorite(a.app), self.is_favorite(b.app)
+        if left_favorite != right_favorite:
+            return -1 if left_favorite else 1
         if self.sort.get_selected() == 1:
             left, right = a.app.size or 0, b.app.size or 0
             if left != right:
@@ -280,7 +305,7 @@ class AppsPage(Gtk.Box):
             self.window.toast(tr("Impossible d'ouvrir cette application : {value0}", value0=error))
             return
         launch = download.kind == "appimage"
-        label = tr('Lancer') if launch else "Installer"
+        label = tr('Lancer') if launch else tr('Installer')
         body = tr('{value0}\n\n{value1}\n\nOuvrez uniquement des applications de provenance connue.', value0=download.path, value1=download.description)
         self.window.confirm(f"{label} {download.path.name} ?", body, label,
                             lambda: self._open_download(download), destructive=False)
@@ -292,14 +317,20 @@ class AppsPage(Gtk.Box):
         command = download.command
         paths = [Path.home()] if download.kind == "flatpak" else ["/", "/var/cache/apt/archives"]
         self.window.run(command.argv, tr('Installation de {value0}', value0=download.path.name), command.display,
-                        on_done=lambda ok: self._after_install(), space_paths=paths)
+                        on_done=lambda ok: self._after_install(), space_paths=paths,
+                        space_request=space.Request('deb', str(download.path)) if download.kind == 'deb'
+                        else space.Request())
 
     def _launch_download(self, download):
         try:
             local_apps.launch_appimage(download)
             message = tr('{value0} se lance…', value0=download.path.stem)
+            ok = True
         except (OSError, ValueError) as error:
             message = tr('Impossible de lancer : {value0}', value0=error)
+            ok = False
+        GLib.idle_add(self.window.record_operation, tr('Lancement de {value0}', value0=download.path.stem),
+                      ok, message, str(download.path))
         GLib.idle_add(self.window.toast, message)
 
     def _after_install(self):
@@ -316,6 +347,12 @@ class AppsPage(Gtk.Box):
         except GLib.Error as error:
             self.window.toast(tr('Impossible de lancer {value0} : {value1}', value0=app.name, value1=error.message))
 
+    @staticmethod
+    def _space_request(apps):
+        apt_apps = [app for app in apps if app.source == APT]
+        return space.Request('apt-install', [app.ident for app in apt_apps],
+                             partial=len(apt_apps) != len(apps)) if apt_apps else space.Request()
+
     def update(self, app):
         command = scanner.update_command(app)
         if command is None:
@@ -326,7 +363,8 @@ class AppsPage(Gtk.Box):
         self.window.confirm(tr('Mettre à jour {value0} ?', value0=app.name), body, tr('Mettre à jour'),
                             lambda: self.window.run(command.argv, tr('Mise à jour de {value0}', value0=app.name), command.display,
                                                     on_done=lambda ok: self.scan(),
-                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]),
+                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()],
+                                                    space_request=self._space_request([app])),
                             destructive=False)
 
     def update_all(self):
@@ -342,7 +380,8 @@ class AppsPage(Gtk.Box):
                             tr('Tout mettre à jour'),
                             lambda: self.window.run(command.argv, tr('Mise à jour de toutes les applications'),
                                                     command.display, on_done=lambda ok: self.scan(),
-                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]),
+                                                    space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()],
+                                                    space_request=self._space_request(apps)),
                             destructive=False)
 
     def remove(self, app):
@@ -399,7 +438,9 @@ class AppsPage(Gtk.Box):
                     Gio.File.new_for_path(str(path)).trash(None)
                 except GLib.Error as error:
                     self.window.toast(tr('Application désinstallée, mais raccourci conservé : {value0}', value0=error.message))
+            DataDialog(app, self.window, after_removal=True).present(self.window)
         self.scan()
+        self.window.system_page.refresh()
 
     def _remove_local(self, app):
         try:
@@ -453,8 +494,12 @@ class AppsPage(Gtk.Box):
         try:
             local_removal.execute(app, plan, lambda p: Gio.File.new_for_path(str(p)).trash(None))
             self.window.toast(tr('{value0} : éléments mis à la corbeille.', value0=app.name))
+            self.window.record_operation(tr('Retrait de {value0}', value0=app.name),
+                                         output='\n'.join(map(str, [plan.launcher, plan.bundle] if plan.bundle else [plan.launcher])))
+            DataDialog(app, self.window, after_removal=True, shortcut_only=plan.bundle is None).present(self.window)
         except (OSError, ValueError, GLib.Error) as error:
             self.window.toast(tr('Retrait incomplet ou annulé : {value0}. Vérifiez aussi la corbeille.', value0=error))
+            self.window.record_operation(tr('Retrait de {value0}', value0=app.name), False, str(error))
         self.scan()
 
     def _trash(self, app):
@@ -464,6 +509,7 @@ class AppsPage(Gtk.Box):
             self.window.toast(tr('Impossible de supprimer : {value0}', value0=error.message))
             return
         self.window.toast(tr('{value0} est dans la corbeille.', value0=app.name))
+        self.window.record_operation(tr('Retrait de {value0}', value0=app.name), output=app.ident)
         self._after_remove(app, True)
 
 
@@ -491,7 +537,9 @@ def app_options(app, page):
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3,
                    margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
     popover = Gtk.Popover(child=body)
-    actions = [(tr('Données et dossiers associés'), lambda: page.show_data(app), False)]
+    actions = [(tr('Données et dossiers associés'), lambda: page.show_data(app), False),
+               (tr('Retirer des favoris') if page.is_favorite(app) else tr('Ajouter aux favoris'),
+                lambda: page.toggle_favorite(app), False)]
     if scanner.update_command(app):
         actions.append((tr('Mettre à jour'), lambda: page.update(app), False))
     if app.source in REMOVABLE:
@@ -519,7 +567,7 @@ class AppCard(Gtk.Box):
         top.append(Gtk.Label(label=SOURCES[app.source], ellipsize=Pango.EllipsizeMode.END, max_width_chars=10,
                              valign=Gtk.Align.START, css_classes=['pill-tag', f'src-{app.source}']))
         self.append(top)
-        self.append(Gtk.Label(label=app.name, xalign=0, wrap=True, lines=2, max_width_chars=20,
+        self.append(Gtk.Label(label=('★ ' if page.is_favorite(app) else '') + app.name, xalign=0, wrap=True, lines=2, max_width_chars=20,
                                ellipsize=Pango.EllipsizeMode.END, css_classes=['heading', 'app-card-title']))
         detail = ' · '.join([app.version or tr('version inconnue'), GLib.format_size(app.size) if app.size else '—'])
         self.append(Gtk.Label(label=detail, xalign=0, ellipsize=Pango.EllipsizeMode.END,
@@ -537,7 +585,7 @@ class AppCard(Gtk.Box):
 
 class AppRow(Adw.ActionRow):
     def __init__(self, app: scanner.App, page: AppsPage):
-        super().__init__(title=GLib.markup_escape_text(app.name), subtitle_lines=2)
+        super().__init__(title=GLib.markup_escape_text(('★ ' if page.is_favorite(app) else '') + app.name), subtitle_lines=2)
         self.app = app
         self.add_css_class('app-row')
 

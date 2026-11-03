@@ -8,7 +8,7 @@ from pathlib import Path
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from . import scanner, system
+from . import scanner, system, space
 from .storage_dialog import StorageDialog
 from .widgets import StatCard, icon_tile, page_box, page_scroller, stat_grid, usage_bar
 
@@ -18,6 +18,7 @@ class SystemPage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.window = window
         self.measured_rows = []
+        self.actions = []
 
         content = page_box()
         self.card_os = StatCard(tr('Système'), "computer-symbolic")
@@ -33,6 +34,7 @@ class SystemPage(Gtk.Box):
         for title, description, actions in system.action_groups():
             group = Adw.PreferencesGroup(title=title, description=description)
             for action in actions:
+                self.actions.append(action)
                 group.add(self._action_row(action))
             content.append(group)
 
@@ -65,7 +67,8 @@ class SystemPage(Gtk.Box):
             self.window.run(["bash", "-c", action.command], action.title, action.display or action.command.strip(),
                             on_done=lambda ok: self._after(action),
                             space_paths=["/", "/var/cache/apt/archives", "/var/lib/flatpak", Path.home()]
-                            if action.check_space else None)
+                            if action.check_space else None,
+                            space_request=space.Request('apt-upgrade', partial=True) if action.check_space else None)
         if action.confirm:
             self.window.confirm(f"{action.title} ?", action.confirmation or action.subtitle + ".",
                                 tr('Supprimer') if action.destructive else tr('Lancer'), go,

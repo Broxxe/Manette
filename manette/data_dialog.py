@@ -11,9 +11,12 @@ from . import app_data
 
 
 class DataDialog(Adw.Dialog):
-    def __init__(self, app, window):
-        super().__init__(title=tr('Données de {value0}', value0=app.name), content_width=680, content_height=600)
+    def __init__(self, app, window, after_removal=False, shortcut_only=False):
+        super().__init__(title=tr('Bilan du retrait de {value0}', value0=app.name) if after_removal else
+                         tr('Données de {value0}', value0=app.name), content_width=680, content_height=600)
         self.app, self.window = app, window
+        self.after_removal = after_removal
+        self.other_apps = list(window.apps_page.apps) if after_removal else []
         self.generation = 0
         self.connect('closed', lambda *_: self._closed())
         header = Adw.HeaderBar()
@@ -21,10 +24,15 @@ class DataDialog(Adw.Dialog):
         self.add_button.connect('clicked', lambda *_: self._select_folder())
         header.pack_end(self.add_button)
         page = Adw.PreferencesPage()
+        if after_removal:
+            page.add(Adw.PreferencesGroup(title=tr('Raccourci retiré') if shortcut_only else tr('Application retirée'),
+                description=tr('Le programme peut encore être présent. Les données ci-dessous sont conservées.') if shortcut_only else
+                tr('Les données ci-dessous sont conservées. Vous pouvez les ouvrir ou choisir un dossier à mettre à la corbeille. Certains dossiers peuvent être partagés et la détection peut être incomplète.')))
         self.summary = Adw.PreferencesGroup(title=tr('Espace associé'), description=tr('Mesure en cours…'))
         page.add(self.summary)
         app_size = GLib.format_size(app.size) if app.size is not None else tr('inconnue')
-        self.summary.add(Adw.ActionRow(title=tr("Taille de l'application"), subtitle=app_size))
+        self.summary.add(Adw.ActionRow(title=tr('Taille du programme avant retrait') if after_removal else
+                                      tr("Taille de l'application"), subtitle=app_size))
         self.folders = Adw.PreferencesGroup(title=tr('Dossiers associés'),
             description=tr('Détection des emplacements standards et dossiers ajoutés manuellement. Certains dossiers peuvent être partagés entre applications. Retirer une association conserve tous les fichiers.'))
         page.add(self.folders)
@@ -50,12 +58,20 @@ class DataDialog(Adw.Dialog):
     def _measure(self, generation):
         try:
             usages, total, complete = app_data.measure(app_data.discover(self.app))
+            blocked = {}
+            if self.after_removal:
+                for usage in usages:
+                    try:
+                        app_data.trash_candidate(usage.folder.path, self.app, self.other_apps)
+                    except (OSError, ValueError) as exc:
+                        blocked[str(usage.folder.path)] = str(exc)
             error = None
         except (OSError, ValueError) as exc:
             usages, total, complete, error = [], 0, False, str(exc)
-        GLib.idle_add(self._populate, generation, usages, total, complete, error)
+            blocked = {}
+        GLib.idle_add(self._populate, generation, usages, total, complete, error, blocked)
 
-    def _populate(self, generation, usages, total, complete, error):
+    def _populate(self, generation, usages, total, complete, error, blocked=None):
         if generation != self.generation:
             return
         self.add_button.set_sensitive(True)
@@ -63,9 +79,10 @@ class DataDialog(Adw.Dialog):
             self.folders.remove(row)
         self.rows.clear()
         self.summary.set_description(tr('Données associées sur disque : {value0}', value0=GLib.format_size(total)) +
-                                    (' · mesure partielle' if not complete else '') if not error else tr('Mesure impossible'))
-        self.message.set_text(error or ('' if usages else
-            tr('Aucun dossier identifié automatiquement. Vous pouvez en associer un avec le bouton en haut.')))
+                                    (' · ' + tr('mesure partielle') if not complete else '') if not error else tr('Mesure impossible'))
+        empty_message = tr('Aucune donnée restante identifiée. La détection ne garantit pas l’absence d’autres dossiers.') if self.after_removal else \
+            tr('Aucun dossier identifié automatiquement. Vous pouvez en associer un avec le bouton en haut.')
+        self.message.set_text(error or ('' if usages else empty_message))
         for usage in usages:
             folder = usage.folder
             size = GLib.format_size(usage.size) if usage.size is not None else tr('indisponible')
@@ -73,13 +90,20 @@ class DataDialog(Adw.Dialog):
             if usage.included_in is not None:
                 detail = tr('Déjà inclus dans {value0}', value0=usage.included_in)
             if not usage.complete:
-                detail += ' · dossier absent, illisible ou mesure incomplète'
+                detail += ' · ' + tr('dossier absent, illisible ou mesure incomplète')
             row = Adw.ActionRow(title=GLib.markup_escape_text(str(folder.path)),
                                 subtitle=GLib.markup_escape_text(detail), title_lines=2)
             open_button = Gtk.Button(icon_name='folder-open-symbolic', tooltip_text=tr('Ouvrir le dossier'),
                                      valign=Gtk.Align.CENTER, sensitive=folder.path.is_dir())
             open_button.connect('clicked', lambda *_, p=folder.path: self._open(p))
             row.add_suffix(open_button)
+            if self.after_removal:
+                reason = (blocked or {}).get(str(folder.path), '')
+                trash = Gtk.Button(icon_name='user-trash-symbolic',
+                    tooltip_text=reason or tr('Mettre ce dossier à la corbeille'),
+                    valign=Gtk.Align.CENTER, sensitive=not reason, css_classes=['flat', 'destructive-action'])
+                trash.connect('clicked', lambda *_, p=folder.path: self._confirm_trash(p))
+                row.add_suffix(trash)
             if not folder.automatic:
                 remove = Gtk.Button(icon_name='list-remove-symbolic', tooltip_text=tr("Retirer l'association (garde les fichiers)"),
                                     valign=Gtk.Align.CENTER)
@@ -87,6 +111,30 @@ class DataDialog(Adw.Dialog):
                 row.add_suffix(remove)
             self.folders.add(row)
             self.rows.append(row)
+
+    def _confirm_trash(self, path):
+        try:
+            target = app_data.trash_candidate(path, self.app, self.window.apps_page.apps)
+            identity = target.stat()
+        except (OSError, ValueError) as error:
+            self.message.set_text(str(error))
+            return
+        def trash():
+            try:
+                checked = app_data.trash_candidate(path, self.app, self.window.apps_page.apps)
+                current = checked.stat()
+                if checked != target or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+                    raise ValueError(tr('Le dossier a changé depuis la confirmation. Réessayez.'))
+                Gio.File.new_for_path(str(checked)).trash(None)
+                self.window.record_operation(tr('Données mises à la corbeille : {value0}', value0=self.app.name), output=str(checked))
+                self.refresh()
+                self.window.system_page.refresh()
+            except (OSError, ValueError, GLib.Error) as error:
+                self.message.set_text(tr('Impossible de supprimer : {value0}', value0=error))
+                self.window.record_operation(tr('Retrait des données de {value0}', value0=self.app.name), False, str(error))
+        self.window.confirm(tr('Mettre ce dossier à la corbeille ?'),
+            tr('{value0}\n\nTout son contenu sera déplacé, y compris les réglages, modèles ou documents qu’il contient. Vérifiez qu’aucune autre application ne l’utilise et fermez les applications concernées. L’espace sera libéré en vidant la corbeille.', value0=target),
+            tr('Mettre à la corbeille'), trash)
 
     def _open(self, path):
         try:

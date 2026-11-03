@@ -148,3 +148,45 @@ def measure(folders: list[Folder], timeout=20) -> tuple[list[Usage], int, bool]:
         complete = complete and ok
         result.append(Usage(folder, size, ok))
     return result, total, complete
+
+
+def trash_candidate(path, app, other_apps):
+    """Validate an individual data folder; never delete a broad/shared directory."""
+    path = Path(path).expanduser().absolute()
+    home = Path.home().resolve()
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(tr('Ce dossier est absent ou correspond à un lien symbolique.'))
+    resolved = path.resolve(strict=True)
+    if not resolved.is_relative_to(home) or resolved == home or path != resolved:
+        raise ValueError(tr('Seuls les dossiers réels situés dans le dossier personnel peuvent être mis à la corbeille.'))
+    protected = {home, home / '.local', home / '.var', home / '.var/app', home / 'snap',
+                 Path(GLib.get_user_config_dir()).resolve(), Path(GLib.get_user_cache_dir()).resolve(),
+                 Path(GLib.get_user_data_dir()).resolve(), Path(GLib.get_user_state_dir()).resolve()}
+    protected.update(home / name for name in ('.ssh', '.gnupg', '.local/share/Trash', '.local/share/applications',
+                                             '.local/bin', '.local/opt', 'Applications', 'AppImages', 'opt', 'Games'))
+    protected.update(Path(value).resolve() for directory in (
+        GLib.UserDirectory.DIRECTORY_DESKTOP, GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+        GLib.UserDirectory.DIRECTORY_DOWNLOAD, GLib.UserDirectory.DIRECTORY_MUSIC,
+        GLib.UserDirectory.DIRECTORY_PICTURES, GLib.UserDirectory.DIRECTORY_PUBLIC_SHARE,
+        GLib.UserDirectory.DIRECTORY_TEMPLATES, GLib.UserDirectory.DIRECTORY_VIDEOS)
+        if (value := GLib.get_user_special_dir(directory)))
+    if any(resolved.is_relative_to(home / name) for name in ('.ssh', '.gnupg', '.local/share/Trash')):
+        raise ValueError(tr('Ce dossier est un emplacement personnel ou partagé protégé.'))
+    if os.path.ismount(resolved) or any(root == resolved or root.is_relative_to(resolved) for root in protected):
+        raise ValueError(tr('Ce dossier est un emplacement personnel ou partagé protégé.'))
+    if resolved.stat().st_uid != os.getuid():
+        raise ValueError(tr('Ce dossier n’appartient pas au compte utilisateur.'))
+    for other in other_apps:
+        if app_key(other) == app_key(app):
+            continue
+        from .local_removal import _program_paths
+        programs = _program_paths(other.info) if other.info else []
+        if other.source == APPIMAGE:
+            programs.append(Path(other.ident).resolve())
+        if any(program.is_relative_to(resolved) for program in programs):
+            raise ValueError(tr('Ce dossier peut aussi être utilisé par {value0}.', value0=other.name))
+        for folder in discover(other):
+            other_path = folder.path.resolve()
+            if resolved == other_path or resolved.is_relative_to(other_path) or other_path.is_relative_to(resolved):
+                raise ValueError(tr('Ce dossier peut aussi être utilisé par {value0}.', value0=other.name))
+    return resolved

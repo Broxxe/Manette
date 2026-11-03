@@ -5,6 +5,9 @@ from .i18n import _ as tr
 import os
 import re
 import signal
+import sqlite3
+
+from . import history
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
@@ -26,6 +29,11 @@ class Console(Gtk.Box):
         self.proc = None
         self.title = ""
         self.on_done = None
+        self.operation_id = None
+        self.operation_output = ""
+        self.operation_errors = ""
+        self.recording = False
+        self.stop_requested = False
 
         self.status = Adw.WindowTitle(title=tr('Console'), subtitle=tr('Prête'))
         header = Adw.HeaderBar(title_widget=self.status)
@@ -37,6 +45,10 @@ class Console(Gtk.Box):
         copy.connect("clicked", lambda *_: self._copy())
         clear = Gtk.Button(icon_name="edit-clear-all-symbolic", tooltip_text=tr('Effacer'))
         clear.connect("clicked", lambda *_: self.clear())
+        self.diagnose_button = Gtk.Button(icon_name='dialog-warning-symbolic',
+            tooltip_text=tr('Diagnostiquer le problème'), visible=False)
+        self.diagnose_button.connect('clicked', self._diagnose)
+        header.pack_end(self.diagnose_button)
         header.pack_start(self.stop_button)
         header.pack_start(self.spinner)
         header.pack_end(clear)
@@ -65,6 +77,17 @@ class Console(Gtk.Box):
         return self.proc is not None
 
     def run(self, argv, title, display=None, on_done=None):
+        self.operation_output = ''
+        self.operation_errors = ''
+        self.title = title
+        self.recording = True
+        self.stop_requested = False
+        self.diagnose_button.set_visible(False)
+        self.operation_id = None
+        try:
+            self.operation_id = history.start(title, display or ' '.join(argv))
+        except (OSError, sqlite3.Error):
+            self.on_finished(tr('Historique indisponible'), False)
         self.stack.set_visible_child_name("log")
         if self.buffer.get_char_count():
             self._write("\n")
@@ -80,6 +103,12 @@ class Console(Gtk.Box):
             proc = launcher.spawnv(["setsid", *argv])
         except GLib.Error as error:
             self._write(tr('✘ Impossible de lancer la commande : {value0}\n', value0=error.message), "error")
+            self._record_finished(127)
+            self.diagnose_button.set_visible(True)
+            self.status.set_subtitle(tr('Échec') + ' : ' + title)
+            if on_done:
+                on_done(False)
+            self.on_finished(title, False)
             return
 
         self.proc, self.title, self.on_done = proc, title, on_done
@@ -90,6 +119,7 @@ class Console(Gtk.Box):
     def stop(self):
         if not self.proc:
             return
+        self.stop_requested = True
         try:
             os.killpg(int(self.proc.get_identifier()), signal.SIGTERM)
         except (OSError, TypeError, ValueError):
@@ -129,22 +159,45 @@ class Console(Gtk.Box):
         except GLib.Error:
             pass
         code = proc.get_exit_status() if proc.get_if_exited() else -1
-        ok = code == 0
+        ok = code == 0 and not self.stop_requested
         if ok:
             self._write(tr('✔ Terminé\n'), "ok")
-        elif code == -1:
+        elif code == -1 or self.stop_requested:
             self._write(tr('✘ Arrêté\n'), "error")
         elif code in (126, 127):
             self._write(tr('✘ Échec (code {value0}) : mot de passe refusé ou annulé ?\n', value0=code), "error")
         else:
             self._write(tr('✘ Échec (code {value0})\n', value0=code), "error")
 
+        self._record_finished(code, 'stopped' if self.stop_requested else None)
+        self.diagnose_button.set_visible(not ok)
         title, on_done = self.title, self.on_done
         self.proc, self.on_done = None, None
         self._set_running(False, tr('Terminé') if ok else tr('Échec'))
-        if on_done:
-            on_done(ok)
-        self.on_finished(title, ok)
+        try:
+            if on_done:
+                on_done(ok)
+        finally:
+            self.on_finished(title, ok)
+
+    def _record_finished(self, code, status=None):
+        self.recording = False
+        # Keep errors from an early APT stage even if a later Flatpak stage
+        # produces more than the bounded output tail.
+        if self.operation_errors and self.operation_errors not in self.operation_output:
+            self.operation_output = self.operation_errors + '\n' + history.tail(
+                self.operation_output, history.MAX_OUTPUT - len(self.operation_errors.encode('utf-8')) - 1)
+        if self.operation_id is not None:
+            try:
+                history.finish(self.operation_id, code, self.operation_output, status)
+            except (OSError, sqlite3.Error):
+                self._write(tr('Historique indisponible') + '\n', 'error')
+        self.operation_id = None
+
+    def _diagnose(self, *unused):
+        from .history_dialog import DiagnosticDialog
+        window = self.get_root()
+        DiagnosticDialog(window, self.operation_output).present(window)
 
     def _set_running(self, running, outcome=""):
         self.spinner.set_visible(running)
@@ -152,6 +205,13 @@ class Console(Gtk.Box):
         self.status.set_subtitle(self.title if running else f"{outcome} : {self.title}")
 
     def _write(self, text, tag=None):
+        if self.recording:
+            self.operation_output = history.tail(self.operation_output + text)
+            error_lines = '\n'.join(line for line in text.splitlines() if
+                any(term in line.casefold() for term in ('e:', 'error:', 'failed', 'échec', 'impossible',
+                    'timed out', 'délai', 'no space', 'dpkg was interrupted', 'unmet dependencies')))
+            if error_lines:
+                self.operation_errors = history.tail(self.operation_errors + '\n' + error_lines, 16 * 1024)
         end = self.buffer.get_end_iter()
         if tag:
             self.buffer.insert_with_tags_by_name(end, text, tag)

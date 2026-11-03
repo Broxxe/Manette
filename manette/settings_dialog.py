@@ -148,6 +148,14 @@ class SettingsDialog(Adw.Dialog):
             error = None
         except Exception as exc:
             result, error = None, str(exc)
+        message = error or {
+            'installed': _('Nouvelle version prête. Relancez Manette pour l’utiliser.'),
+            'updated': _('Nouvelle version prête. Relancez Manette pour l’utiliser.'),
+            'unmanaged': _('Relancez Manette depuis le menu des applications pour activer les mises à jour.')
+        }.get(result, _('Manette est à jour.'))
+        GLib.idle_add(self.window.record_operation,
+                     _('Installation de Manette') if operation == 'install' else _('Recherche de mise à jour de Manette'),
+                     error is None, message)
         GLib.idle_add(self._finished, result, error)
 
     def _finished(self, result, error):
@@ -174,8 +182,11 @@ def automatic_check(window):
     def work():
         try:
             if updater.check() == 'updated':
+                GLib.idle_add(window.record_operation, _('Mise à jour de Manette'), True,
+                             _('Nouvelle version prête. Relancez Manette pour l’utiliser.'))
                 GLib.idle_add(window.toast, _('Une mise à jour de Manette est prête pour le prochain lancement.'))
-        except Exception:
+        except Exception as error:
+            GLib.idle_add(window.record_operation, _('Recherche de mise à jour de Manette'), False, str(error))
             # Une connexion absente ne doit pas perturber l'utilisation de l'application.
             pass
     threading.Thread(target=work, daemon=True).start()

@@ -38,7 +38,7 @@ class PresentationTests(unittest.TestCase):
     def test_both_presentations_receive_filter_changes_and_empty_state(self):
         page = Mock()
         page.apps = [App('Example', APT, 'example'), App('Other', FLATPAK, 'other')]
-        page._matches = AppsPage._matches
+        page._matches = lambda app, key: AppsPage._matches(page, app, key)
         page.filter, page.query = 'apt', 'missing'
         AppsPage._invalidate_filter(page)
         page.list.invalidate_filter.assert_called_once()
