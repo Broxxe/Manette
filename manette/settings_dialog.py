@@ -58,8 +58,9 @@ class SettingsDialog(Adw.Dialog):
         language_group.add(self.language)
         page.add(language_group)
         group = Adw.PreferencesGroup(title=_('Mises à jour de Manette'),
-            description=_('Les nouvelles versions proviennent du dépôt GitHub Broxxe/Manette. '
-                          'Elles sont préparées sans droits administrateur et appliquées au prochain lancement.'))
+            description=_('Seules les versions publiées sur GitHub (Broxxe/Manette) sont installées. '
+                          'Elles sont préparées sans droits administrateur et appliquées au prochain lancement ; '
+                          'si une nouvelle version ne démarre pas, la précédente revient automatiquement.'))
         managed = updater.managed()
         self.automatic = Adw.SwitchRow(title=_('Mises à jour automatiques'),
             subtitle=_('Recherche au démarrage puis chaque jour, au maximum une fois par jour.'),
@@ -126,7 +127,7 @@ class SettingsDialog(Adw.Dialog):
     def _enable(self):
         self.window.confirm(_('Activer les mises à jour de Manette ?'),
             _('Une installation utilisateur sera créée sans modifier les fichiers de travail actuels. '
-              'Les futures versions seront téléchargées automatiquement depuis GitHub Broxxe/Manette. '
+              'Les futures versions publiées seront téléchargées automatiquement depuis GitHub Broxxe/Manette. '
               'Les préférences et commandes personnelles sont conservées.'),
             _('Activer'), lambda: self._start('install'), destructive=False)
 
@@ -151,7 +152,9 @@ class SettingsDialog(Adw.Dialog):
         message = error or {
             'installed': _('Nouvelle version prête. Relancez Manette pour l’utiliser.'),
             'updated': _('Nouvelle version prête. Relancez Manette pour l’utiliser.'),
-            'unmanaged': _('Relancez Manette depuis le menu des applications pour activer les mises à jour.')
+            'unmanaged': _('Relancez Manette depuis le menu des applications pour activer les mises à jour.'),
+            'no-release': _('Aucune version publiée pour le moment.'),
+            'rejected': _('La dernière version publiée a été écartée : elle ne démarrait pas sur cet ordinateur.'),
         }.get(result, _('Manette est à jour.'))
         GLib.idle_add(self.window.record_operation,
                      _('Installation de Manette') if operation == 'install' else _('Recherche de mise à jour de Manette'),
@@ -168,6 +171,10 @@ class SettingsDialog(Adw.Dialog):
             self.status.set_subtitle(_('Nouvelle version prête. Relancez Manette pour l’utiliser.'))
         elif result == 'unmanaged':
             self.status.set_subtitle(_('Relancez Manette depuis le menu des applications pour activer les mises à jour.'))
+        elif result == 'no-release':
+            self.status.set_subtitle(_('Aucune version publiée pour le moment.'))
+        elif result == 'rejected':
+            self.status.set_subtitle(_('La dernière version publiée a été écartée : elle ne démarrait pas sur cet ordinateur.'))
         else:
             self.status.set_subtitle(_('Manette est à jour.'))
 

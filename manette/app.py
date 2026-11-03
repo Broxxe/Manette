@@ -14,7 +14,7 @@ from .console import Console
 from .custom_page import CustomPage
 from .monitor_page import MonitorPage
 from .system_page import SystemPage
-from . import history, preferences, system
+from . import history, preferences, system, updater
 from .history_dialog import HistoryDialog, DiagnosticDialog
 from .space_dialog import SpaceDialog
 from .settings_dialog import SettingsDialog, automatic_check, periodic_check
@@ -101,6 +101,23 @@ class Window(Adw.ApplicationWindow):
         self.refresh()
         GLib.timeout_add_seconds(5, automatic_check, self)
         GLib.timeout_add_seconds(86400, periodic_check, self)
+        GLib.idle_add(self._show_rollback_notice)
+        # Assez tôt pour une vraie utilisation, assez tard pour qu'un plantage au démarrage soit détecté.
+        GLib.timeout_add_seconds(8, self._confirm_started)
+
+    def _show_rollback_notice(self):
+        if bad := updater.rollback_notice():
+            self.toast(tr('Nouvelle version écartée : elle ne démarrait pas. Retour à la version précédente.'))
+            self.record_operation(tr('Mise à jour de Manette'), False,
+                                  tr('La version {value0} quittait en erreur au démarrage. Manette est revenue automatiquement à la version précédente et ne réinstallera pas celle-ci.', value0=bad[:12]))
+        return False
+
+    def _confirm_started(self):
+        try:
+            updater.confirm_started()
+        except (OSError, ValueError):
+            pass  # nouvelle tentative au prochain lancement
+        return False
 
     def _on_page_changed(self):
         if self.stack.get_visible_child_name() == "monitor":
@@ -218,7 +235,7 @@ class ManetteApp(Adw.Application):
         window.present()
 
     def _about(self):
-        Adw.AboutDialog(application_name="Manette", application_icon=APP_ID, version="0.1",
+        Adw.AboutDialog(application_name="Manette", application_icon=APP_ID, version=updater.installed_version() or "dev",
                         license_type=Gtk.License.GPL_3_0_ONLY, copyright="© 2026 Broxxe",
                         comments=tr('Applications, système et commandes accessibles en quelques clics.')).present(
             self.props.active_window)

@@ -57,7 +57,11 @@ L’installation ne demande aucun droit administrateur et crée une copie isolé
 
 ## Mises à jour et protections
 
-Les installations gérées peuvent télécharger automatiquement les mises à jour de Manette depuis la branche par défaut du dépôt GitHub **Broxxe/Manette**. Elles s’appliquent au prochain lancement ; la recherche automatique peut être désactivée dans les réglages.
+Les installations gérées peuvent télécharger automatiquement les mises à jour de Manette depuis les **versions publiées** (releases) du dépôt GitHub **Broxxe/Manette** ; un push sur la branche par défaut n’est jamais distribué. Elles s’appliquent au prochain lancement ; la recherche automatique peut être désactivée dans les réglages.
+
+Une nouvelle version reste à l’essai tant qu’elle n’a pas fonctionné quelques secondes. Si elle quitte en erreur avant, le lanceur revient automatiquement à la version précédente, écarte la version fautive pour ne pas la retélécharger et le signale dans l’historique. Seules la version active et la précédente sont conservées sur le disque.
+
+Pour distribuer une version, publiez une release GitHub (par exemple l’étiquette `v0.2`) sur le commit voulu. Les préversions et les brouillons sont ignorés.
 
 Les modifications système utilisent la demande d’autorisation administrateur habituelle lorsque nécessaire. Les nettoyages et retraits demandent confirmation ; les désinstallations APT présentent une simulation. Les données des applications sont conservées sauf retrait demandé séparément. Les dossiers protégés ou identifiés comme partagés sont bloqués, mais leur détection peut être incomplète.
 

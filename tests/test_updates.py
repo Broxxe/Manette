@@ -1,11 +1,14 @@
 import fcntl
 import io
 import json
+import os
 from pathlib import Path
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+import urllib.error
 import zipfile
 
 from manette import preferences, updater
@@ -14,6 +17,12 @@ from manette.settings_dialog import automatic_check
 
 REVISION = 'a' * 40
 NEXT = 'b' * 40
+GOOD = 'c' * 40
+
+
+def release(status, tag='v0.2', sha=NEXT):
+    return [json.dumps({'tag_name': tag}).encode(), json.dumps({'sha': sha}).encode(),
+            json.dumps({'status': status}).encode()]
 
 
 def archive(extra=None):
@@ -60,9 +69,10 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(preferences.load()['language'], 'en')
         self.assertTrue(preferences.load()['automatic_updates'])
         self.assertEqual((updater.root() / 'current').resolve(), destination)
-        launcher = self.home / '.local/bin/manette'
-        self.assertTrue(launcher.is_symlink())
-        self.assertEqual(launcher.resolve(), destination / 'bin/manette')
+        executable = self.home / '.local/bin/manette'
+        self.assertTrue(executable.is_symlink())
+        self.assertEqual(executable.resolve(), updater.launcher())
+        self.assertTrue(updater.launcher().stat().st_mode & stat.S_IXUSR)
         self.assertTrue((destination / 'bin/manette').stat().st_mode & stat.S_IXUSR)
 
     def test_valid_update_keeps_previous_version_and_changes_only_active_link(self):
@@ -112,10 +122,8 @@ class UpdateTests(unittest.TestCase):
 
     def test_update_checks_revision_and_requires_forward_history(self):
         previous = self.install()
-        responses = [json.dumps({'default_branch': 'main'}).encode(), json.dumps({'sha': NEXT}).encode(),
-                     json.dumps({'status': 'behind'}).encode()]
         with patch.object(updater, 'managed', return_value=True), \
-                patch.object(updater, 'request', side_effect=responses) as request:
+                patch.object(updater, 'request', side_effect=release('diverged')) as request:
             with self.assertRaises(ValueError):
                 updater.check(force=True)
             self.assertEqual(request.call_count, 3)
@@ -123,14 +131,91 @@ class UpdateTests(unittest.TestCase):
 
     def test_forward_update_is_staged_and_repeated_checks_are_limited(self):
         self.install()
-        responses = [json.dumps({'default_branch': 'main'}).encode(), json.dumps({'sha': NEXT}).encode(),
-                     json.dumps({'status': 'ahead'}).encode(), archive()]
         with patch.object(updater, 'managed', return_value=True), \
-                patch.object(updater, 'request', side_effect=responses) as request:
+                patch.object(updater, 'request', side_effect=release('ahead') + [archive()]) as request:
             self.assertEqual(updater.check(force=True), 'updated')
             self.assertEqual(updater.check(), 'skipped')
             self.assertEqual(request.call_count, 4)
-        self.assertEqual((updater.root() / 'current').resolve().name, NEXT)
+            self.assertIn('/releases/latest', request.call_args_list[0].args[0])
+            self.assertIn('/commits/v0.2', request.call_args_list[1].args[0])
+        active = (updater.root() / 'current').resolve()
+        self.assertEqual(active.name, NEXT)
+        self.assertEqual(json.loads((active / 'installation.json').read_text())['version'], 'v0.2')
+
+    def test_only_published_releases_are_followed(self):
+        previous = self.install()
+        missing = urllib.error.HTTPError('https://api.github.com', 404, 'Not Found', {}, io.BytesIO())
+        with patch.object(updater, 'managed', return_value=True), \
+                patch.object(updater, 'request', side_effect=missing):
+            self.assertEqual(updater.check(force=True), 'no-release')
+        # Une installation plus récente que la dernière version publiée n'est pas une erreur.
+        with patch.object(updater, 'managed', return_value=True), \
+                patch.object(updater, 'request', side_effect=release('behind')):
+            self.assertEqual(updater.check(force=True), 'current')
+        self.assertEqual((updater.root() / 'current').resolve(), previous)
+
+    def test_rejected_release_is_not_downloaded_again(self):
+        previous = self.install()
+        (updater.root() / 'rejected').write_text(NEXT + '\n')
+        with patch.object(updater, 'managed', return_value=True), \
+                patch.object(updater, 'request', side_effect=release('ahead')) as request:
+            self.assertEqual(updater.check(force=True), 'rejected')
+            self.assertEqual(request.call_count, 2)
+        self.assertEqual((updater.root() / 'current').resolve(), previous)
+
+    def confirm_as(self, folder):
+        with patch.object(updater, '__file__', str(folder / 'manette/updater.py')):
+            updater.confirm_started()
+
+    def test_new_version_stays_on_trial_until_it_confirms_its_start(self):
+        local = self.install()
+        self.assertFalse((updater.root() / 'pending').exists())  # rien vers quoi revenir
+        good = updater.stage_archive(archive(), GOOD)
+        bad = updater.stage_archive(archive(), NEXT)
+        self.assertEqual((updater.root() / 'pending').read_text(), NEXT)
+        self.confirm_as(good)  # l'ancienne version ne valide pas la nouvelle
+        self.assertTrue((updater.root() / 'pending').exists())
+        self.assertTrue(local.is_dir())
+        self.confirm_as(bad)
+        self.assertFalse((updater.root() / 'pending').exists())
+        remaining = {p.name for p in (updater.root() / 'versions').iterdir()}
+        self.assertEqual(remaining, {GOOD, NEXT})  # seulement l'active et la précédente
+
+    def test_confirmed_start_migrates_the_executable_to_the_stable_launcher(self):
+        destination = self.install()
+        executable = self.home / '.local/bin/manette'
+        executable.unlink()
+        executable.symlink_to(updater.root() / 'current/bin/manette')  # ancienne installation
+        self.confirm_as(destination)
+        self.assertEqual(executable.resolve(), updater.launcher())
+
+    def run_launcher(self, marker):
+        return subprocess.run([str(updater.launcher())], env={**os.environ, 'MARK': str(marker)},
+                              capture_output=True, text=True, timeout=20)
+
+    def test_launcher_rolls_back_a_version_that_fails_to_start(self):
+        self.install()
+        good = updater.stage_archive(archive({'bin/manette': '#!/bin/sh\necho good > "$MARK"\nexit 0\n'}), GOOD)
+        updater.stage_archive(archive({'bin/manette': '#!/bin/sh\nexit 3\n'}), NEXT)
+        marker = self.home / 'ran'
+        result = self.run_launcher(marker)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text().strip(), 'good')
+        self.assertEqual((updater.root() / 'current').resolve(), good)
+        self.assertFalse((updater.root() / 'pending').exists())
+        self.assertIn(NEXT, updater.rejected())
+        self.assertEqual(updater.rollback_notice(), NEXT)
+        self.assertIsNone(updater.rollback_notice())
+
+    def test_launcher_never_rolls_back_a_confirmed_version(self):
+        self.install()
+        updater.stage_archive(archive(), GOOD)
+        bad = updater.stage_archive(archive({'bin/manette': '#!/bin/sh\nexit 3\n'}), NEXT)
+        self.confirm_as(bad)
+        result = self.run_launcher(self.home / 'ran')
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual((updater.root() / 'current').resolve(), bad)
+        self.assertEqual(updater.rejected(), set())
 
     def test_concurrent_updates_are_blocked(self):
         updater.root().mkdir(parents=True)

@@ -62,7 +62,11 @@ Installation requires no administrator privileges and creates an isolated copy, 
 
 ## Updates and safeguards
 
-Managed installations can automatically download Manette updates from the default branch of **Broxxe/Manette** on GitHub. Updates apply on the next launch; automatic checks can be disabled in settings.
+Managed installations can automatically download Manette updates from the **published releases** of **Broxxe/Manette** on GitHub; pushes to the default branch are never distributed. Updates apply on the next launch; automatic checks can be disabled in settings.
+
+A new version stays on trial until it has been running for a few seconds. If it exits with an error before that, the launcher automatically switches back to the previous version, sets the faulty release aside so it is not downloaded again, and reports it in the history. Only the active and previous versions are kept on disk.
+
+To ship a version, publish a GitHub release (for example tag `v0.2`) on the commit to distribute. Pre-releases and drafts are ignored.
 
 System changes use the normal administrator authorization prompt when needed. Cleanup and removals ask for confirmation; APT removals show a package preview. Application data is kept unless separately selected for removal. Protected or identified shared folders are blocked, but folder detection can be incomplete.
 
