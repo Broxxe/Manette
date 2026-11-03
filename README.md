@@ -10,7 +10,7 @@ A GTK 4 + libadwaita desktop app for managing applications and everyday system t
 - **Flexible interface:** compact cards or list view, favorites, English/French interface and adjustable background opacity.
 - **Global search:** find applications, commands, settings and associated folders with **Ctrl+K**.
 - **Storage:** graphical folder usage, linked application data, space estimates before installation and a retained-data summary after removal.
-- **Maintenance:** system updates, cleanup, update diagnostics and live resource monitoring.
+- **Maintenance:** system updates, cleanup, update diagnostics and live resource monitoring, with logical CPU bars grouped by physical core.
 - **Custom commands:** save commands as buttons, with optional terminal execution.
 - **History:** review the last 500 operations, filter failures and copy reports with **Ctrl+H**. Show the live console with **Ctrl+J**.
 

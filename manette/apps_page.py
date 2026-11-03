@@ -97,7 +97,7 @@ class AppsPage(Gtk.Box):
         self.list.set_filter_func(self._filter_row)
         self.list.set_sort_func(self._sort_rows)
         self.grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
-                                min_children_per_line=1, max_children_per_line=5,
+                                min_children_per_line=1, max_children_per_line=64,
                                 column_spacing=12, row_spacing=12, valign=Gtk.Align.START,
                                 css_classes=['app-grid'])
         self.grid.set_filter_func(lambda child: self._filter_row(child.get_child()))

@@ -68,6 +68,13 @@ levelbar.usage block.filled.ok   { background: var(--accent-bg-color); }
 levelbar.usage block.filled.warn { background: var(--warning-bg-color); }
 levelbar.usage block.filled.crit { background: var(--error-bg-color); }
 
+/* A physical core groups its logical processor bars without averaging them. */
+.cpu-physical-core {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+
 /* Tuiles de Mes commandes */
 button.tile {
   padding: 18px;

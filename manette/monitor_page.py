@@ -80,16 +80,20 @@ class MonitorPage(Gtk.Box):
         content.append(self.cards)
 
         self.cpu_group = Adw.PreferencesGroup(title=tr('Processeur'), description=monitor.cpu_model())
-        self.cores = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, min_children_per_line=8,
-                                 max_children_per_line=16, column_spacing=6, row_spacing=12)
-        self.core_bars = []
-        cores_card = Gtk.Box(css_classes=["card"], margin_top=0)
+        self.cores = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, min_children_per_line=1,
+                                 max_children_per_line=64, column_spacing=8, row_spacing=12)
+        self.core_bars = {}
+        self.core_layout = None
+        cores_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["card"], margin_top=0)
         cores_card.append(self.cores)
         self.cores.set_margin_top(16)
         self.cores.set_margin_bottom(14)
         self.cores.set_margin_start(14)
         self.cores.set_margin_end(14)
         self.cores.set_hexpand(True)
+        self.cpu_legend = Gtk.Label(xalign=0, wrap=True, margin_start=16, margin_end=16, margin_bottom=14,
+            label=tr('Chaque barre représente un processeur logique.'), css_classes=['caption', 'dim-label'])
+        cores_card.append(self.cpu_legend)
         self.cpu_group.add(cores_card)
         content.append(self.cpu_group)
 
@@ -142,6 +146,7 @@ class MonitorPage(Gtk.Box):
     def _sample(self, with_apps):
         data = {"cpu": self.cpu.sample(), "freq": monitor.cpu_frequency(), "temp": monitor.cpu_temperature(),
                 "mem": monitor.memory(), "gpus": monitor.gpus()}
+        data['cpu_ids'], data['cpu_topology'] = self.cpu.cpu_ids, self.cpu.topology
         if with_apps:
             data["apps"] = self.apps.sample()
         GLib.idle_add(self._update, data)
@@ -153,7 +158,8 @@ class MonitorPage(Gtk.Box):
                    number(f"{data['freq']:.2f} GHz") if data["freq"] else ""]
         self.card_cpu.set(number(f"{total:.0%}"), " · ".join(d for d in details if d))
         self.card_cpu.spark.push(total)
-        self._update_cores(cores)
+        ids = data.get('cpu_ids', tuple(range(len(cores))))
+        self._update_cores(cores, ids, data.get('cpu_topology', monitor.CpuTopology(tuple((ident,) for ident in ids), False)))
 
         mem = data["mem"]
         self.card_mem.set(GLib.format_size(mem.used), tr('sur {value0} · {value1} disponibles', value0=GLib.format_size(mem.total), value1=GLib.format_size(mem.available)))
@@ -167,25 +173,52 @@ class MonitorPage(Gtk.Box):
         if "apps" in data:
             self._update_apps(data["apps"])
 
-    def _update_cores(self, cores):
-        if len(self.core_bars) != len(cores):
+    def _update_cores(self, cores, ids, topology):
+        layout = (ids, topology)
+        if layout != self.core_layout:
+            self.core_layout = layout
             self.cores.remove_all()
-            self.core_bars = []
-            for i in range(len(cores)):
-                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
-                bar = usage_bar()
-                bar.set_orientation(Gtk.Orientation.VERTICAL)
-                bar.set_inverted(True)
-                bar.set_size_request(10, 56)
-                bar.set_halign(Gtk.Align.CENTER)
-                box.append(bar)
-                box.append(Gtk.Label(label=str(i + 1), css_classes=["caption", "dim-label", "numeric"]))
-                self.cores.append(box)
+            self.core_bars = {}
+            for index, members in enumerate(topology.groups, 1):
+                group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                                css_classes=['cpu-physical-core'] if topology.known else [])
+                columns = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER)
+                for ident in members:
+                    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
+                    bar = usage_bar()
+                    bar.set_orientation(Gtk.Orientation.VERTICAL)
+                    bar.set_inverted(True)
+                    bar.set_size_request(10, 56)
+                    bar.set_halign(Gtk.Align.CENTER)
+                    box.append(bar)
+                    box.append(Gtk.Label(label=str(ident + 1), css_classes=['caption', 'dim-label', 'numeric']))
+                    columns.append(box)
+                    self.core_bars[ident] = (bar, index)
+                group.append(columns)
+                if topology.known:
+                    group.append(Gtk.Label(label=tr('Cœur {value0}', value0=index),
+                                           css_classes=['caption', 'dim-label']))
+                self.cores.append(group)
                 self.cores.get_last_child().set_focusable(False)
-                self.core_bars.append(bar)
-        for bar, value in zip(self.core_bars, cores):
+            logical_label = tr('processeur logique') if len(ids) == 1 else tr('processeurs logiques')
+            summary = f'{len(ids)} {logical_label}'
+            if topology.known:
+                physical_label = tr('cœur physique') if topology.physical_count == 1 else tr('cœurs physiques')
+                summary = f'{topology.physical_count} {physical_label} · {summary}'
+            else:
+                summary += ' · ' + tr('topologie physique indisponible')
+            # The counts describe the topology exposed by Linux, including in VMs.
+            self.cpu_group.set_description(monitor.cpu_model() + '\n' + summary)
+            self.cpu_legend.set_label(tr('Chaque barre représente un processeur logique. Les barres d’un même cœur physique sont regroupées.')
+                                     if topology.known else tr('Chaque barre représente un processeur logique.'))
+        for ident, value in zip(ids, cores):
+            bar, core = self.core_bars[ident]
             bar.set_value(value)
-            bar.set_tooltip_text(number(f"{value:.0%}"))
+            label = tr('Cœur physique {value0} · processeur logique {value1} : {value2}',
+                       value0=core, value1=ident + 1, value2=number(f'{value:.0%}')) if topology.known else \
+                    tr('Processeur logique {value0} : {value1}', value0=ident + 1, value1=number(f'{value:.0%}'))
+            bar.set_tooltip_text(label)
+            bar.update_property([Gtk.AccessibleProperty.LABEL], [label])
 
     def _update_gpu(self, gpu: monitor.Gpu):
         self.gpu_group.set_description(gpu.name)

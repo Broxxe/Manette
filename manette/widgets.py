@@ -1,6 +1,6 @@
 """Petits composants partagés entre les pages."""
 
-from gi.repository import Adw, Gtk, Pango
+from gi.repository import Gtk, Pango
 
 
 def plural(n: int, one: str, many: str) -> str:
@@ -8,8 +8,8 @@ def plural(n: int, one: str, many: str) -> str:
 
 
 def page_scroller(child: Gtk.Widget) -> Gtk.ScrolledWindow:
-    clamp = Adw.Clamp(maximum_size=1040, tightening_threshold=800, child=child)
-    return Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+    return Gtk.ScrolledWindow(child=child, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                               hexpand=True, vexpand=True)
 
 
 def page_box() -> Gtk.Box:

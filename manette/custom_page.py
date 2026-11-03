@@ -40,7 +40,7 @@ class CustomPage(Gtk.Box):
 
         self.stack = Gtk.Stack()
         self.grid = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, column_spacing=12,
-                                row_spacing=12, min_children_per_line=1, max_children_per_line=4,
+                                row_spacing=12, min_children_per_line=1, max_children_per_line=64,
                                 valign=Gtk.Align.START)
         self.stack.add_named(self.grid, "grid")
         self.empty = Adw.StatusPage(icon_name="utilities-terminal-symbolic", title=tr('Aucune commande'),

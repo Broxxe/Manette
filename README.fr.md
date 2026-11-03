@@ -10,7 +10,7 @@ Une application de bureau GTK 4 + libadwaita pour gérer les applications et les
 - **Interface adaptable :** cartes compactes ou liste, favoris, français/anglais et opacité du fond réglable.
 - **Recherche globale :** retrouver applications, commandes, réglages et dossiers associés avec **Ctrl+K**.
 - **Stockage :** occupation graphique des dossiers, données associées aux applications, estimation avant installation et bilan des données conservées après retrait.
-- **Maintenance :** mises à jour du système, nettoyage, diagnostic des erreurs de mise à jour et suivi des ressources en direct.
+- **Maintenance :** mises à jour du système, nettoyage, diagnostic des erreurs de mise à jour et suivi des ressources en direct, avec les barres des processeurs logiques regroupées par cœur physique.
 - **Commandes personnelles :** enregistrer des commandes sous forme de boutons, avec ouverture possible dans un terminal.
 - **Historique :** consulter les 500 dernières opérations, filtrer les échecs et copier les rapports avec **Ctrl+H**. Afficher la console avec **Ctrl+J**.
 

@@ -37,24 +37,102 @@ def cpu_model() -> str:
     return tr('Processeur')
 
 
+@dataclass(frozen=True)
+class CpuTopology:
+    # Each group contains the Linux CPU IDs belonging to one exposed core.
+    groups: tuple[tuple[int, ...], ...]
+    known: bool
+
+    @property
+    def physical_count(self):
+        return len(self.groups) if self.known else None
+
+
+def _cpu_list(text):
+    """Linux cpulist format: 0-3,8,10-11. Invalid metadata stays unknown."""
+    result = set()
+    try:
+        for part in text.split(','):
+            bounds = part.split('-')
+            if not part or len(bounds) > 2:
+                return set()
+            first, last = int(bounds[0]), int(bounds[-1])
+            if not 0 <= first <= last < 2**20:
+                return set()
+            result.update(range(first, last + 1))
+    except ValueError:
+        return set()
+    return result
+
+
+def cpu_topology(cpu_ids):
+    """Use kernel topology, never CPU numbering or an assumed SMT factor."""
+    ids = tuple(cpu_ids)
+    online = set(ids)
+    siblings, keys = {}, {}
+    for ident in ids:
+        root = Path(f'/sys/devices/system/cpu/cpu{ident}/topology')
+        package, core, die = (_read(root / name) for name in ('physical_package_id', 'core_id', 'die_id'))
+        if package.isdigit() and core.isdigit():
+            keys[ident] = (int(package), int(die) if die.isdigit() else -1, int(core))
+        members = _cpu_list(_read(root / 'core_cpus_list') or _read(root / 'thread_siblings_list'))
+        if ident in members and (len(members) > 1 or ident in keys):
+            siblings[ident] = tuple(sorted(members & online))
+    if ids and all(ident in siblings and all(siblings.get(member) == siblings[ident]
+                  for member in siblings[ident]) for ident in ids):
+        return CpuTopology(tuple(sorted(set(siblings.values()), key=lambda group: group[0])), True)
+    if len(keys) != len(ids):
+        # Older kernels/architectures may expose topology only in /proc/cpuinfo.
+        proc_keys = {}
+        for block in _read('/proc/cpuinfo').split('\n\n'):
+            fields = dict(line.split(':', 1) for line in block.splitlines() if ':' in line)
+            fields = {key.strip(): value.strip() for key, value in fields.items()}
+            ident, package, core = (fields.get(key, '') for key in ('processor', 'physical id', 'core id'))
+            if ident.isdigit() and int(ident) in online and package.isdigit() and core.isdigit():
+                proc_keys[int(ident)] = (int(package), -1, int(core))
+        keys = proc_keys if len(proc_keys) == len(ids) else {}
+    if ids and len(keys) == len(ids):
+        groups = {}
+        for ident in ids:
+            groups.setdefault(keys[ident], []).append(ident)
+        return CpuTopology(tuple(tuple(sorted(group)) for group in groups.values()), True)
+    return CpuTopology(tuple((ident,) for ident in ids), False)
+
+
 class CpuSampler:
     def __init__(self):
         self.prev = None
+        self.cpu_ids = ()
+        self.topology = CpuTopology((), False)
 
     def sample(self) -> tuple[float, list[float]]:
-        """Charge totale puis par cœur, entre 0 et 1, depuis le dernier appel."""
-        rows = []
+        """Charge totale puis par processeur logique, entre 0 et 1."""
+        rows = {}
         for line in _read("/proc/stat").splitlines():
             if not line.startswith("cpu"):
                 break
-            values = [int(v) for v in line.split()[1:9]]
-            rows.append((sum(values), values[3] + values[4]))
+            fields = line.split()
+            if fields[0] != 'cpu' and not fields[0][3:].isdigit():
+                continue
+            try:
+                values = [int(v) for v in fields[1:9]]
+            except ValueError:
+                continue
+            if len(values) < 4:
+                continue
+            rows[fields[0]] = (sum(values), values[3] + (values[4] if len(values) > 4 else 0))
+        ids = tuple(sorted(int(key[3:]) for key in rows if key != 'cpu'))
+        if ids != self.cpu_ids:
+            self.cpu_ids = ids
+            self.topology = cpu_topology(ids)
         prev, self.prev = self.prev, rows
-        if prev is None:
-            return 0.0, [0.0] * (len(rows) - 1)
-        usage = [1 - (idle - p_idle) / (total - p_total) if total > p_total else 0.0
-                 for (total, idle), (p_total, p_idle) in zip(rows, prev)]
-        return usage[0], usage[1:]
+        def usage(key):
+            if prev is None or key not in prev or key not in rows:
+                return 0.0
+            total, idle = rows[key]
+            p_total, p_idle = prev[key]
+            return max(0.0, min(1.0, 1 - (idle - p_idle) / (total - p_total))) if total > p_total else 0.0
+        return usage('cpu'), [usage(f'cpu{ident}') for ident in ids]
 
 
 def cpu_frequency() -> float | None:
