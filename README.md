@@ -4,6 +4,11 @@ English · [Français](README.fr.md)
 
 A GTK 4 + libadwaita desktop app for managing applications and everyday system tasks on Ubuntu and APT-based Linux systems.
 
+<img width="1266" height="816" alt="Capture d’écran du 2026-11-03 17-51-38" src="https://github.com/user-attachments/assets/fbf361f0-2017-4e8a-9505-23dd8f1bb172" />
+
+<img width="1248" height="821" alt="Capture d’écran du 2026-11-03 17-50-30" src="https://github.com/user-attachments/assets/af5874e7-dd7e-47ff-9328-a54727ec9ec0" />
+
+
 ## Features
 
 - **Applications:** launch, update and remove detected APT, Flatpak, Snap, AppImage and local applications. Install downloaded `.deb` and Flatpak files, or launch AppImages.
